@@ -6,3 +6,10 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+
+# Houdini caches and render galleries live next to the .hipnc but stay out of git
+hip/**/geo/
+hip/**/galleries/
+*.bgeo.sc
+*.bgeo
+*.abc
