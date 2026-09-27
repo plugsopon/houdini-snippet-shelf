@@ -265,6 +265,16 @@ def houdini_key(key: str) -> str:
 
 
 @mcp.tool()
+def houdini_create_node(type: str, x: float, y: float, name: str | None = None,
+                        input: str | None = None) -> str:
+    """Brother's cursor glides to (x, y) over a Network Editor, clicks, and a node of `type`
+    (e.g. "null", "attribwrangle", "box") appears right under it, in the network that editor
+    shows. Optional name, and `input` = a node to wire into its first input. One "Brother:"
+    undo step. Get x, y from houdini_screenshot."""
+    return _run("create_node", {"type": type, "x": x, "y": y, "name": name, "input": input})
+
+
+@mcp.tool()
 def houdini_cursor_hide() -> str:
     """Remove Brother's visible cursor from the Houdini window."""
     return _run("cursor_hide")

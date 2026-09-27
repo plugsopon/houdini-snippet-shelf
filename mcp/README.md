@@ -41,6 +41,7 @@ Nothing is running unless you start it.
 | `houdini_undo` | undo Brother's last step; refuses if the top of the stack is Plug's |
 | `houdini_screenshot` | the whole Houdini window; its pixels are the click coordinates |
 | `houdini_pointer`, `houdini_click`, `houdini_type`, `houdini_key`, `houdini_cursor_hide` | Brother's own pink cursor: glides, clicks, types into fields (GUI only) |
+| `houdini_create_node` | cursor glides to a spot in a Network Editor, clicks, and the node appears right under it (optional name + input) - one `Brother:` undo step |
 
 ## Safety
 
@@ -69,3 +70,9 @@ Nothing is running unless you start it.
   reports no focus widget while Houdini isn't the active app.
 - Typing is recorded by Houdini's own undo (not a `Brother:` step), so `houdini_undo` won't
   reverse it; Plug's Ctrl+Z does.
+- `houdini_create_node` (2026-09-28, Plug's GUI Houdini): a null created under the cursor tip,
+  wired to volumewrangle1. Not via the TAB menu on purpose: Houdini opens that menu at Plug's
+  REAL mouse position, and it is a native RE_Window that Qt can't route keys into. The whole
+  main window is one OpenGL surface (panes are not Qt widgets), so the pane is located with
+  `NetworkEditor.qtScreenGeometry()`; its drawing area is the bottom `screenBounds()` part,
+  counted from the bottom-left.

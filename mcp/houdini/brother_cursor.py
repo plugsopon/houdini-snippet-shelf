@@ -245,10 +245,31 @@ def _key_target():
     Plug is usually in another app while Brother works - so fall back to the widget Brother
     last clicked (Houdini's own UI layer routes the keys to the field inside it)."""
     app = QtWidgets.QApplication.instance()
-    w = app.focusWidget() or _ov.get("last")
+    # A window a key just opened (Houdini's TAB menu is its own RE_Window, not a Qt popup)
+    # owns the keyboard while it is up; then a Qt popup; then focus; then the last click.
+    pw = _ov.get("popup")
+    try:
+        if pw is not None and pw.isVisible():
+            return app, (_deepest(pw) or pw)
+    except RuntimeError:
+        pass
+    _ov["popup"] = None
+    w = app.activePopupWidget() or app.focusWidget() or _ov.get("last")
     if w is None:
         raise RuntimeError("nothing to type into - click the field first")
     return app, w
+
+
+def _deepest(win):
+    """The widget inside a window that actually draws/handles input (Houdini: RE_GLDrawable)."""
+    c = win.childAt(win.rect().center())
+    return c or win
+
+
+def _new_windows(before):
+    ov = _ov.get("w")
+    return [w for w in QtWidgets.QApplication.topLevelWidgets()
+            if w.isVisible() and w not in before and w is not ov and w is not _main()]
 
 
 def _send_key(app, w, key, text="", mods=QtCore.Qt.NoModifier):
@@ -284,9 +305,56 @@ def op_key(args):
     k = parts[-1]
     key = _KEYS.get(k) or QtGui.QKeySequence(k.upper())[0].key()
     app, w = _key_target()
+    before = set(QtWidgets.QApplication.topLevelWidgets())
     _send_key(app, w, key, "" if mods != QtCore.Qt.NoModifier or k in _KEYS else k, mods)
-    _pump(0.1)
-    return {"key": args["key"], "into": _describe(w)}
+    _pump(0.35)
+    opened = _new_windows(before)
+    if opened:                                   # e.g. Tab opened the TAB menu: type into it next
+        _ov["popup"] = opened[-1]
+    return {"key": args["key"], "into": _describe(w),
+            "opened": [_describe(_deepest(o)) for o in opened]}
+
+
+def _network_editor_at(x, y):
+    """The Network Editor pane under a main-window point, and that point in network coords.
+
+    The whole main window is ONE OpenGL surface - panes are not Qt widgets - so Qt can't say
+    which pane is where. qtScreenGeometry() can: it is the pane tab's rect on screen, toolbar
+    included. screenBounds() is the network drawing area only, which is the BOTTOM part of that
+    rect, and Houdini counts its pixels from the bottom-left (Qt from the top-left)."""
+    mw = _main()
+    gp = mw.mapToGlobal(QtCore.QPoint(int(x), int(y)))
+    for ne in hou.ui.paneTabs():
+        if ne.type() != hou.paneTabType.NetworkEditor or not ne.isCurrentTab():
+            continue
+        g = ne.qtScreenGeometry()
+        w, h = ne.screenBounds().size()
+        bottom = g.y() + g.height()
+        lx, ly = gp.x() - g.x(), bottom - gp.y()
+        if 0 <= lx <= w and 0 <= ly <= h:
+            return ne, ne.posFromScreen(hou.Vector2(lx, ly))
+    raise RuntimeError("(%d, %d) is not over a Network Editor's drawing area" % (x, y))
+
+
+def op_create_node(args):
+    """Glide to (x, y) in a Network Editor, click there, and create a node of `type` right
+    under the cursor - as ONE 'Brother:' undo step. The TAB menu can't be used for this:
+    Houdini opens it at Plug's REAL mouse position, so the node would land there instead."""
+    x, y = args["x"], args["y"]
+    ov = _glide((x, y))
+    ne, pos = _network_editor_at(x, y)
+    ov.ripples.append((QtCore.QPointF(x, y), time.time()))
+    _pump(0.15)
+    parent = ne.pwd()
+    with hou.undos.group("Brother: create %s" % args["type"]):
+        n = parent.createNode(args["type"], args.get("name") or None)
+        n.setPosition(pos - n.size() * 0.5)
+        if args.get("input"):
+            n.setInput(0, parent.node(args["input"]) or hou.node(args["input"]))
+        n.setSelected(True, clear_all_selected=True)
+    _pump(0.3)
+    return {"created": n.path(), "type": n.type().name(), "network_pos": list(n.position()),
+            "undo_label": "Brother: create %s" % args["type"]}
 
 
 def op_cursor_hide(args):
@@ -295,4 +363,4 @@ def op_cursor_hide(args):
 
 
 OPS = {"screenshot": op_screenshot, "pointer": op_pointer, "click": op_click, "type": op_type,
-       "key": op_key, "cursor_hide": op_cursor_hide}
+       "key": op_key, "cursor_hide": op_cursor_hide, "create_node": op_create_node}
