@@ -186,7 +186,21 @@ def houdini_viewport(frame: float | None = None) -> Image:
     """A picture of Plug's Scene Viewer (one flipbook frame) at the current or given frame."""
     res = json.loads(_run("capture", {"frame": frame} if frame is not None else {}))
     with open(res["file"], "rb") as fh:
-        return Image(data=fh.read(), format="png")
+        data = fh.read()
+    try:
+        # the flipbook's background is transparent; shown as-is it reads as a blank white image
+        import io
+        from PIL import Image as PILImage
+        im = PILImage.open(io.BytesIO(data))
+        if im.mode in ("RGBA", "LA"):
+            bg = PILImage.new("RGB", im.size, (40, 44, 50))
+            bg.paste(im, mask=im.getchannel("A"))
+            buf = io.BytesIO()
+            bg.save(buf, "PNG")
+            data = buf.getvalue()
+    except ImportError:
+        pass
+    return Image(data=data, format="png")
 
 
 # ----------------------------------------------------------------------------- tools: changing

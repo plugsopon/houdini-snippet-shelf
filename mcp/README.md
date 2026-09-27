@@ -50,8 +50,11 @@ Nothing is running unless you start it.
 - `houdini_run_python` leaves a `Brother: <label>` entry on the undo stack even when it only
   reads - prefer the read tools for looking.
 
-## Tested (2026-09-27, hython 21.0.671, two sessions at once)
+## Tested
 
-All tools through a real MCP client. Not yet tested in the GUI: the `hdefereval` path,
-`houdini_viewport` (flipbook needs a Scene Viewer), and Apprentice GUI licensing. First real use
-in Plug's GUI Houdini is the test for those.
+- 2026-09-27, hython 21.0.671, two sessions at once: every tool through a real MCP client.
+- 2026-09-27, Plug's GUI Houdini 21.0.671 Apprentice (test.hipnc): session list, scene, network,
+  node, problems and the viewport capture - the main-thread (`hdefereval`) path works.
+- `houdini_viewport` needs the Scene View tab to be the visible tab in its pane; a hidden one
+  flipbooks nothing, and the tool now says so. The capture is at the camera's resolution with the
+  Apprentice logo, flattened onto a dark background (the flipbook's background is transparent).
