@@ -291,20 +291,32 @@ def op_capture(args):
     """Flipbook one frame of the Scene Viewer to a PNG. GUI sessions only."""
     if not hou.isUIAvailable():
         raise RuntimeError("no UI in this session (hython) - nothing to capture")
-    sv = hou.ui.paneTabOfType(hou.paneTabType.SceneViewer)
-    if sv is None:
+    viewers = [t for t in hou.ui.paneTabs() if t.type() == hou.paneTabType.SceneViewer]
+    if not viewers:
         raise RuntimeError("no Scene Viewer pane open")
-    f = args.get("frame", hou.frame())
-    path = os.path.join(os.path.expanduser("~"), ".houdini_brother", "capture_%d.png" % os.getpid())
+    shown = [t for t in viewers if t.isCurrentTab()]
+    if not shown:
+        # a Scene Viewer hidden behind another tab (Python Shell, ...) flipbooks nothing, silently
+        raise RuntimeError("the Scene Viewer tab is hidden behind another tab - ask Plug to click "
+                           "the Scene View tab, then try again")
+    sv = shown[0]
+    f = int(args.get("frame", hou.frame()))
+    folder = os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"), ".houdini_brother")
+    pattern = os.path.join(folder, "capture_%d_$F4.png" % os.getpid())
+    path = pattern.replace("$F4", "%04d" % f)
+    if os.path.exists(path):
+        os.remove(path)
     s = sv.flipbookSettings().stash()
     s.frameRange((f, f))
-    s.output(path)
+    s.output(pattern)
     s.outputToMPlay(False)
     res = args.get("resolution")
     if res:
         s.useResolution(True)
         s.resolution(tuple(res))
     sv.flipbook(sv.curViewport(), s)
+    if not os.path.exists(path):
+        raise RuntimeError("the flipbook ran but wrote no image (%s)" % path)
     return {"file": path, "frame": f}
 
 
