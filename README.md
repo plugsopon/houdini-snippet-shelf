@@ -23,7 +23,14 @@ The page holds EVERY version of every technique. This folder holds the latest on
 - `page/build/` - what the page is built from (template, JS parts, rebuild script, FX Template export).
 - `page/history/` - earlier builds of the page.
 
-## Houdini scene files
+## Houdini scene files - `hip/`
 
-The .hipnc files stay where Houdini opens them:
-`C:\Users\Plug\Desktop\TestHou\` (emittingRBD\ and the particle tests).
+- `hip/emittingRBD/` - the emitting-RBD work: original file, the rest-pose fix, the root
+  copy, the LOP fix, and `emittingRBD_fracture_v5.hipnc` (builder v005 on the fractured box).
+- `hip/particles/` - the unborn-particles follow-live tests.
+- `hip/underwater/` - Underwater.hipnc (April). Its cobweb / hand .abc files and the hand
+  texture were already missing before the move; they were never in TestHou.
+- Each folder keeps `backup/` (Houdini's own backups) and `geo/` (file caches, found
+  through `$HIP/geo`). Both stay on disk but are NOT in git - `geo/` is ~2.6 GB.
+- Moved here from `C:\Users\Plug\Desktop\TestHou\` on 2026-09-27. Houdini's recent-files
+  list still points at the old path; open them from here.
