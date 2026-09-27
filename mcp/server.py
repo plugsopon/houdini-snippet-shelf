@@ -221,6 +221,55 @@ def houdini_set_parm(path: str, parm: str, value: float | int | str | list | Non
     return _run("set_parm", {"path": path, "parm": parm, "value": value, "expression": expression})
 
 
+# ----------------------------------------------------------------------------- tools: virtual cursor
+@mcp.tool()
+def houdini_screenshot() -> list:
+    """The whole Houdini main window as an image. Its pixel coordinates are the coordinates
+    houdini_pointer / houdini_click take: (0, 0) is the window's top-left corner.
+    Look here first to find where a field or button is."""
+    res = json.loads(_run("screenshot"))
+    with open(res["file"], "rb") as fh:
+        data = fh.read()
+    return ["window %dx%d (click coordinates = image pixels)" % (res["width"], res["height"]),
+            Image(data=data, format="png")]
+
+
+@mcp.tool()
+def houdini_pointer(x: float, y: float) -> str:
+    """Glide Brother's visible cursor to (x, y) in window coordinates, without clicking.
+    Plug's real mouse never moves. Returns which widget is under that point."""
+    return _run("pointer", {"x": x, "y": y})
+
+
+@mcp.tool()
+def houdini_click(x: float, y: float, button: str = "left", double: bool = False) -> str:
+    """Glide the visible cursor to (x, y) and click there (left/right/middle, optional double).
+    Delivered as Qt events to the widget under the point - Plug's mouse is not used.
+    Returns the widget clicked and which widget has keyboard focus afterwards."""
+    return _run("click", {"x": x, "y": y, "button": button, "double": double})
+
+
+@mcp.tool()
+def houdini_type(text: str, delay: float = 0.02) -> str:
+    """Type text into the widget that has keyboard focus (click the field first), one character
+    at a time so Plug sees it typed. "\\n" presses Enter. Houdini records its own undo step for
+    the edit (not a "Brother:" one), so houdini_undo won't reverse typing - Plug's Ctrl+Z will."""
+    return _run("type", {"text": text, "delay": delay})
+
+
+@mcp.tool()
+def houdini_key(key: str) -> str:
+    """Press one key or chord in the focused widget: "enter", "escape", "tab", "ctrl+a",
+    "backspace", arrows..."""
+    return _run("key", {"key": key})
+
+
+@mcp.tool()
+def houdini_cursor_hide() -> str:
+    """Remove Brother's visible cursor from the Houdini window."""
+    return _run("cursor_hide")
+
+
 @mcp.tool()
 def houdini_undo() -> str:
     """Undo Brother's most recent change in the selected session. Refuses if the last undo step

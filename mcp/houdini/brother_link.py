@@ -380,6 +380,12 @@ OPS = {"ping": op_ping, "scene": op_scene, "network": op_network, "node": op_nod
        "compare": op_compare, "capture": op_capture, "run": op_run, "set_parm": op_set_parm,
        "undo": op_undo}
 
+if hou.isUIAvailable():                  # the virtual cursor only exists where there is a window
+    import importlib
+    import brother_cursor
+    importlib.reload(brother_cursor)     # a reload of brother_link picks up cursor changes too
+    OPS.update(brother_cursor.OPS)
+
 
 # ----------------------------------------------------------------------------- server
 def _handle(conn):
@@ -459,6 +465,11 @@ def stop():
         try:
             srv.close()
         except OSError:
+            pass
+    if "brother_cursor" in sys.modules:
+        try:
+            sys.modules["brother_cursor"].remove()
+        except Exception:
             pass
     if _state["reg"] and os.path.exists(_state["reg"]):
         os.remove(_state["reg"])

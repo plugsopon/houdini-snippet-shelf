@@ -39,6 +39,8 @@ Nothing is running unless you start it.
 | `houdini_viewport` | a picture of the Scene Viewer (flipbook one frame) |
 | `houdini_set_parm`, `houdini_run_python` | change things - each call is ONE undo step labelled `Brother: ...` |
 | `houdini_undo` | undo Brother's last step; refuses if the top of the stack is Plug's |
+| `houdini_screenshot` | the whole Houdini window; its pixels are the click coordinates |
+| `houdini_pointer`, `houdini_click`, `houdini_type`, `houdini_key`, `houdini_cursor_hide` | Brother's own pink cursor: glides, clicks, types into fields (GUI only) |
 
 ## Safety
 
@@ -58,3 +60,12 @@ Nothing is running unless you start it.
 - `houdini_viewport` needs the Scene View tab to be the visible tab in its pane; a hidden one
   flipbooks nothing, and the tool now says so. The capture is at the camera's resolution with the
   Apprentice logo, flattened onto a dark background (the flipbook's background is transparent).
+- Virtual cursor (2026-09-28, Plug's GUI Houdini): glide, click into a wrangle's VEXpression,
+  Ctrl+A, type two lines, click away -> the `snippet` parm held exactly the typed text.
+  Learnt on the way, both now in the code: `QWidget.grab()` of the main window is black
+  (Houdini draws with OpenGL), so screenshots grab the screen; and a translucent CHILD widget
+  over Houdini blacked out the whole window with cursor trails, so the cursor is its own
+  top-level transparent window laid over Houdini. Keys go to the last clicked widget because Qt
+  reports no focus widget while Houdini isn't the active app.
+- Typing is recorded by Houdini's own undo (not a `Brother:` step), so `houdini_undo` won't
+  reverse it; Plug's Ctrl+Z does.
