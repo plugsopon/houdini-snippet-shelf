@@ -1,0 +1,43 @@
+// Weighted CURRENT position of live neighbours; closest in the rest layout wins.
+// Gaussian weight (radius = Closest Radius) is < 1e-4 beyond 3*radius, so only
+// that radius is searched: cost ~ N * neighbours, not N * N.
+// A newborn's vote fades in over Blend Time, so nothing jumps.
+function vector neighbourPos(vector rest; int selfid; float radius; float fade;
+                             float wa; int maxn; vector anchor) {
+    float h = max(radius, 1e-4);
+    int near[] = pcfind(2, "P", rest, 3 * h, maxn);
+    vector sum = 0; float wsum = 0;
+    foreach (int n; near) {
+        if (point(2, "id", n) == selfid) continue;
+        int s = point(2, "srcpt", n);
+        vector nRest = point(2, "P", n);
+        vector nNow  = point(1, "P", s);
+        float d = distance(rest, nRest) / h;
+        float w = exp(-d * d);
+        if (fade > 0) w *= smooth(0, 1, point(1, "age", s) / fade);
+        sum += nNow * w; wsum += w;
+    }
+    // emitter = constant-vote anchor: dominates while few particles are alive,
+    // gets outvoted naturally as the sim fills up (keeps early frames steady)
+    sum += anchor * wa; wsum += wa;
+    return wsum > 0 ? sum / wsum : rest;
+}
+
+float blend   = chf("blend_time");
+vector anchor = detail(1, "emitpos");
+vector rest   = v@P;
+vector taken  = neighbourPos(rest, i@id, chf("radius"), blend,
+                             chf("anchor_weight"), chi("max_neighbours"), anchor);
+
+if (i@born) {
+    // ease from the borrowed pose into the real sim so birth never pops ...
+    vector real = point(1, "P", i@srcpt);
+    float age = point(1, "age", i@srcpt);
+    float t = blend > 0 ? smooth(0, 1, age / blend) : 1;
+    // ... and be fully on the sim by the rest frame, so the deform matches rest
+    float restT = (chf("rest_frame") - 1) * @TimeInc;   // time = (frame-1)/fps
+    if (blend > 0) t = max(t, smooth(restT - blend, restT, @Time));
+    v@P = lerp(taken, real, t);
+} else {
+    v@P = taken;
+}

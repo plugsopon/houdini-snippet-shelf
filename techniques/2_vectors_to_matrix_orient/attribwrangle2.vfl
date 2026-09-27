@@ -1,0 +1,13 @@
+v@N = chv('N');
+v@up = chv('up');
+
+// 2 vectors to orient
+p@orient = quaternion(maketransform(v@N, v@up));
+
+// 2 vectors to mat
+matrix3 xform1 = maketransform(v@N, v@up);
+3@xform1 = xform1;
+
+//Oriet to Mat
+matrix3 xform2 = qconvert(p@orient);
+3@xform2 = xform2;

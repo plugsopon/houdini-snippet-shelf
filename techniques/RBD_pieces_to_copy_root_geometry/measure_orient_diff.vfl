@@ -1,0 +1,25 @@
+// Measure how two copies of the SAME geometry differ (same point count + order).
+// Detail Wrangle: input 0 = the copy you are checking, input 1 = the reference.
+int n = npoints(0);
+if (n != npoints(1)) { warning("point count differs: %d vs %d", n, npoints(1)); return; }
+
+vector c0 = 0, c1 = 0;
+for (int i = 0; i < n; i++) { c0 += point(0, "P", i); c1 += point(1, "P", i); }
+c0 /= n; c1 /= n;
+
+matrix3 H = 0;
+for (int i = 0; i < n; i++)
+    H += outerproduct(point(1, "P", i) - c1, point(0, "P", i) - c0);
+matrix3 M = polardecomp(H);                 // pure rotation part
+if (determinant(M) < 0) warning("mirror, not a rotation: flipped or negative scale");
+
+vector4 q = quaternion(M);
+float err = 0;
+for (int i = 0; i < n; i++)
+    err += length2((point(1, "P", i) - c1) * M - (point(0, "P", i) - c0));
+
+p@diff_orient    = q;
+f@diff_angle_deg = degrees(2 * acos(clamp(abs(q.w), 0, 1)));
+v@diff_axis      = normalize(set(q.x, q.y, q.z));
+v@diff_offset    = c0 - c1;
+f@fit_rms        = sqrt(err / n);           // ~0 = only a rigid rotation apart

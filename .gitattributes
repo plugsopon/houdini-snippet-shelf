@@ -1,0 +1,10 @@
+# keep scripts LF so they paste cleanly into Houdini on any machine
+*.py   text eol=lf
+*.vfl  text eol=lf
+*.md   text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.hip   binary
+*.hipnc binary
+*.hiplc binary

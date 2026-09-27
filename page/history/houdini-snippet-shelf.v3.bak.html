@@ -1,0 +1,577 @@
+<title>Houdini Snippet Shelf</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Thai:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#EEF0EE; --panel:#F8F9F8; --line:#D5DAD6; --ink:#1A2124; --ink-2:#4E5A5E; --ink-3:#7B8689;
+  --accent:#B85C1A; --accent-soft:#F3E3D5; --vex:#2F6B8C; --vex-soft:#DCE8EF;
+  --code-bg:#161B1E; --code-ink:#D9DEDC; --code-line:#262E32;
+  --ok:#2E7D4F; --warn:#9A3B2A;
+  --f-display:"IBM Plex Sans Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","IBM Plex Sans Thai",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Consolas,"SFMono-Regular",monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#121618; --panel:#1A2023; --line:#2B3438; --ink:#E4E8E6; --ink-2:#A9B3B3; --ink-3:#77838A;
+    --accent:#E08A45; --accent-soft:#3A2618; --vex:#79B4D4; --vex-soft:#18303D;
+    --code-bg:#0D1113; --code-ink:#D9DEDC; --code-line:#1F272B; --ok:#6CC08F; --warn:#E3806D;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#121618; --panel:#1A2023; --line:#2B3438; --ink:#E4E8E6; --ink-2:#A9B3B3; --ink-3:#77838A;
+  --accent:#E08A45; --accent-soft:#3A2618; --vex:#79B4D4; --vex-soft:#18303D;
+  --code-bg:#0D1113; --code-ink:#D9DEDC; --code-line:#1F272B; --ok:#6CC08F; --warn:#E3806D;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font:15px/1.55 var(--f-body);padding-inline:16px;padding-block:20px 40px}
+.wrap{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:14px}
+.brand h1{font:700 28px/1.1 var(--f-display);letter-spacing:.01em;margin:0;text-wrap:balance}
+.brand p{margin:4px 0 0;color:var(--ink-2);font-size:14px}
+.count{font:500 12px var(--f-mono);color:var(--ink-3);letter-spacing:.04em;align-self:center}
+button{font:inherit;cursor:pointer}
+.btn{border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:6px;padding:7px 12px;font:500 13px var(--f-body);display:inline-flex;gap:6px;align-items:center}
+.btn:hover{border-color:var(--ink-3)}
+.btn[disabled]{opacity:.55;cursor:default}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--warn)}
+.btn.small{padding:4px 9px;font-size:12px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.layout{display:grid;grid-template-columns:380px minmax(0,1fr);gap:22px;align-items:start}
+@media (max-width:920px){.layout{grid-template-columns:minmax(0,1fr)}}
+aside{display:flex;flex-direction:column;gap:10px;position:sticky;top:calc(env(safe-area-inset-top,0px) + 12px)}
+@media (max-width:920px){aside{position:static}}
+.search{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font:14px var(--f-body)}
+.tree{border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
+.thead,.trow{display:grid;grid-template-columns:minmax(0,1fr) 64px 86px;gap:8px;align-items:center}
+.thead{padding:7px 12px;border-bottom:1px solid var(--line);font:500 11px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+details.grp{border-bottom:1px solid var(--line)}
+details.grp:last-child{border-bottom:0}
+details.grp>summary{list-style:none;cursor:pointer;padding:7px 12px;font:600 13px var(--f-body);color:var(--ink-2);display:flex;gap:8px;align-items:center}
+details.grp>summary::-webkit-details-marker{display:none}
+details.grp>summary::before{content:"";width:0;height:0;border-left:5px solid var(--ink-3);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s}
+details.grp[open]>summary::before{transform:rotate(90deg)}
+details.grp>summary .n{margin-left:auto;font:500 11px var(--f-mono);color:var(--ink-3)}
+.trow{padding:5px 12px 5px 28px;border-top:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.trow[aria-current="true"]{background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.trow .name{border:0;background:transparent;color:var(--ink);text-align:left;padding:4px 0;font:500 14px/1.3 var(--f-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .type{font:500 11px var(--f-mono);color:var(--ink-2)}
+.trow select{font:500 12px var(--f-mono);padding:3px 6px;border:1px solid var(--line);border-radius:5px;background:var(--ground);color:var(--ink);width:100%}
+.empty{padding:18px 14px;color:var(--ink-3);font-size:13px}
+main{min-width:0}
+.detail{display:flex;flex-direction:column;gap:16px}
+.dhead{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}
+.dhead h2{font:700 25px/1.2 var(--f-display);margin:0;text-wrap:balance}
+.dmeta{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;font:12px var(--f-mono);color:var(--ink-2)}
+.pill{border:1px solid var(--line);border-radius:999px;padding:1px 9px;background:var(--panel)}
+.pill.type{border-color:var(--vex);color:var(--vex);background:var(--vex-soft)}
+.pill.ver{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+.pv{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px}
+@media (max-width:1100px){.pv{grid-template-columns:minmax(0,1fr)}}
+.preview{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.preview img{display:block;width:100%;height:auto;border-radius:4px;max-height:520px;object-fit:contain;background:var(--code-bg)}
+.phold{padding:40px 14px;text-align:center;color:var(--ink-3);font-size:13px;border:1px dashed var(--line);border-radius:6px}
+.notesbox{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.notesbox h3,.sect{font:500 11px var(--f-mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);margin:0}
+.notesbox p{margin:0;white-space:pre-wrap;font-size:14px;max-width:68ch}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.tab{border:1px solid transparent;border-bottom:0;background:transparent;color:var(--ink-2);padding:7px 12px;border-radius:6px 6px 0 0;font:500 13px var(--f-body);display:inline-flex;gap:7px;align-items:center;margin-bottom:-1px}
+.tab[aria-selected="true"]{background:var(--panel);border-color:var(--line);color:var(--ink)}
+.lang{font:500 10.5px var(--f-mono);letter-spacing:.05em;text-transform:uppercase;padding:1px 6px;border-radius:4px}
+.lang.python{background:var(--accent-soft);color:var(--accent)}
+.lang.vex{background:var(--vex-soft);color:var(--vex)}
+.fpanel{display:flex;flex-direction:column;gap:14px}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:0}
+.meta div{background:var(--panel);padding:8px 12px;display:flex;flex-direction:column;gap:2px}
+.meta dt{font:500 11px var(--f-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3)}
+.meta dd{margin:0;font:500 13px var(--f-mono);color:var(--ink);overflow-wrap:anywhere}
+.desc{max-width:70ch;white-space:pre-wrap;margin:0}
+.fnotes{max-width:70ch;border-left:2px solid var(--line);padding:2px 0 2px 14px;color:var(--ink-2);white-space:pre-wrap;font-size:14px;margin:0}
+.fnotes b{color:var(--ink)}
+.codebox{border-radius:8px;overflow:hidden;background:var(--code-bg);border:1px solid var(--code-line)}
+.codebar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 10px 7px 14px;border-bottom:1px solid var(--code-line);font:12px var(--f-mono);color:#8C999C}
+.codebar .btn{background:#222A2E;border-color:#323C41;color:#E4E8E6;padding:5px 10px;font-size:12px}
+.codebar .btn.done{color:#7FD3A0;border-color:#2F5A42}
+pre{margin:0;overflow-x:auto;padding:14px 16px;max-height:70vh}
+pre code{font:13px/1.6 var(--f-mono);color:var(--code-ink);tab-size:4;white-space:pre}
+.hljs-comment{color:#6F7E80;font-style:italic}.hljs-keyword,.hljs-built_in{color:#E3A06A}.hljs-string{color:#A8C98A}
+.hljs-number,.hljs-literal{color:#D6A2D8}.hljs-title,.hljs-title.function_{color:#7FC0E0}.hljs-type{color:#E6CB7A}.hljs-meta{color:#9AA7A9}
+.hljs-params{color:var(--code-ink)}
+.visual{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 12px 8px;display:flex;flex-direction:column;gap:8px}
+.preview .visual{border:0;padding:0;background:transparent}
+.visual .scroll{overflow-x:auto}
+.visual svg{display:block;width:100%;height:auto;min-width:560px}
+.visual figcaption{font-size:13px;color:var(--ink-2);max-width:72ch}
+.visual svg text{font-family:var(--f-mono);fill:var(--ink)}
+.visual svg .sub{fill:var(--ink-3);font-size:10px}
+.visual svg .lbl{fill:var(--ink-2);font-size:11px;letter-spacing:.06em}
+.visual svg .node rect{fill:var(--ground);stroke:var(--line);stroke-width:1.2}
+.visual svg .node.key rect{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.6}
+.visual svg .node.io rect{fill:var(--vex-soft);stroke:var(--vex)}
+.visual svg .node .flag{fill:var(--ink-3)}
+.visual svg .node.key .flag{fill:var(--accent)}
+.visual svg .wire{fill:none;stroke:var(--ink-3);stroke-width:1.4}
+.visual svg .port{fill:var(--panel);stroke:var(--ink-3);stroke-width:1.2}
+.visual svg .born{fill:var(--ink-2)}
+.visual svg .unborn{fill:var(--panel);stroke:var(--ink-3);stroke-width:1.3}
+.visual svg .hot{fill:var(--accent)}
+.visual svg .target{fill:var(--panel);stroke:var(--accent);stroke-width:2.2}
+.visual svg .radius{fill:color-mix(in srgb,var(--accent) 10%,transparent);stroke:var(--accent);stroke-dasharray:4 4;stroke-width:1.2}
+.visual svg .pull{stroke:var(--accent);stroke-width:1.3;stroke-dasharray:3 3;fill:none}
+.visual svg .frame{fill:none;stroke:var(--line)}
+.visual svg .emit{fill:var(--vex-soft);stroke:var(--vex)}
+.mask{border-collapse:collapse;font:12px var(--f-mono);font-variant-numeric:tabular-nums;min-width:520px}
+.mask th{font-weight:500;color:var(--ink-3);text-align:left;padding:5px 12px 5px 0;white-space:nowrap;letter-spacing:.04em}
+.mask td{text-align:center;padding:5px 0;width:44px;border-left:1px solid var(--line)}
+.mask td.y{color:var(--ok)}.mask td.n{color:var(--ink-3)}
+.mask td.gone{color:var(--warn);text-decoration:line-through}
+.mask tr.hl td,.mask tr.hl th{background:var(--accent-soft)}
+form.editor{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;display:grid;gap:12px}
+.card h3{margin:0;font:600 15px var(--f-display);letter-spacing:.02em}
+.fhead{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+label{display:flex;flex-direction:column;gap:4px;font:500 12px var(--f-mono);color:var(--ink-2);letter-spacing:.03em}
+input,select,textarea{font:14px var(--f-body);color:var(--ink);background:var(--ground);border:1px solid var(--line);border-radius:6px;padding:8px 10px;width:100%}
+textarea{resize:vertical}
+textarea.code{font:13px/1.55 var(--f-mono);min-height:220px;white-space:pre;tab-size:4}
+.drop{border:1px dashed var(--line);border-radius:6px;padding:12px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px;color:var(--ink-2)}
+.drop img{max-height:120px;width:auto;border-radius:4px}
+.formbar{display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;align-items:center;position:sticky;bottom:0;background:var(--ground);padding-block:10px;border-top:1px solid var(--line)}
+.status{font:12px var(--f-mono);color:var(--ink-3)}
+.status.err{color:var(--warn)}
+.confirm{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:color-mix(in srgb,var(--warn) 10%,var(--panel));border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));border-radius:8px;padding:10px 12px;font-size:14px}
+@media (prefers-reduced-motion:reduce){details.grp>summary::before{transition:none}}
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Houdini Snippet Shelf</h1>
+      <p>เทคนิค FX แยกตาม category · แต่ละเทคนิคมีหลาย version · ในแต่ละ version มี Python / VEX ที่ copy ไปแปะใน Houdini ได้เลย</p>
+    </div>
+    <div class="actions">
+      <span class="count" id="count"></span>
+      <button class="btn primary" id="newTech" type="button" hidden>+ New technique</button>
+    </div>
+  </header>
+  <div class="layout">
+    <aside>
+      <input class="search" id="q" type="search" placeholder="Search name, notes, code…" aria-label="Search techniques">
+      <div class="tree">
+        <div class="thead"><span>Name</span><span>Type</span><span>Version</span></div>
+        <div id="tree"></div>
+      </div>
+    </aside>
+    <main id="main"></main>
+  </div>
+</div>
+
+<script id="lib-data" type="application/json">{"techniques": [{"id": "unborn-follow-live", "name": "Unborn particles → follow live", "category": "Particles", "type": "Sop", "author": "Plug", "versions": [{"v": "v001", "date": "2026-09-25", "notes": "ปัญหา: เอาเฟรมสุดท้ายของ POP sim มาเป็นพอยต์ชุดคงที่ แล้ว copy P จากซิมตาม id ตัวที่ยังไม่เกิดหา id ตัวเองไม่เจอ เลยลอยค้างอยู่กลางอากาศ\n\nวิธีแก้: ให้ตัวที่ยังไม่เกิดไปเอาตำแหน่งปัจจุบันของเพื่อนที่เกิดแล้วซึ่งอยู่ใกล้ในท่า rest (เฉลี่ยแบบ Gaussian + emitter เป็นตัวถ่วง) แล้ว blend เข้าซิมจริงตอนเกิด ใช้ขับ Point Deform ได้\n\nเริ่มจาก build_follow_live_v2.py (BUILD_DEMO = True ใช้กับ geo ว่างได้เลย)\nทดสอบกับ H21.0.671 · ยังไม่ได้ลองกับ 20.5", "previewImage": "", "previewVisual": "follow-concept", "files": [{"id": "follow-rig", "title": "Follow-live rig builder (unborn particles)", "lang": "python", "context": "Python Shell", "tested": "Houdini 21.0.671", "filename": "build_follow_live_v2.py", "description": "สร้าง rig ทั้งชุดให้พอยต์ที่ยังไม่เกิด (ยังไม่มี id ในซิม) ไปเอาตำแหน่งปัจจุบันของพาร์ติเคิลที่มีชีวิตซึ่งอยู่ใกล้มันที่สุดในเลย์เอาต์ของเฟรม rest แล้วค่อยๆ blend เข้าตำแหน่งซิมจริงตอนเกิด ใช้ขับ Point Deform ได้โดยไม่กระตุก\n\nBUILD_DEMO = True จะสร้าง grid → anim → POP sim ให้ใน geo ว่างๆ ถ้าตั้งเป็น False จะ rig scene ของพี่เอง (ตั้ง path ใน CONFIG หรือเลือก sim node ก่อนรัน)", "notes": "รัน paste ทั้งก้อนใน Windows → Python Shell · ผลลัพธ์อยู่ที่ OUT_follow_live (lattice) และ OUT_follow_deform · Max Neighbours: 256 นิ่งกว่า, 64 = default, 32 เร็วกว่า (วัดที่ 200k พาร์ติเคิล: ~470 / ~145 / ~95 ms ต่อเฟรม) · ทดสอบกับ H21 เท่านั้น ยังไม่ได้ลองกับ 20.5", "code": "# ============================================================================\n# Unborn-particle \"follow live neighbours\" rig  (paste into Houdini Python Shell)\n#\n# Problem: you take the LAST frame of a POP sim as a fixed point set and copy P\n# from the live sim by id. Points whose id is not born yet have nothing to copy\n# and hang in space. This rig moves every not-yet-born point to a smooth\n# weighted average of the CURRENT positions of live particles that sit closest\n# to it in the rest layout, so the lattice is deform-safe (Point Deform).\n#\n# HOW TO USE\n#   1. Set BUILD_DEMO / the paths in CONFIG below.\n#   2. Paste the whole thing into Windows > Python Shell and press Enter.\n#   It creates new nodes next to SIM_NODE; it never edits your existing nodes.\n# ============================================================================\n\nimport hou\n\n# ----------------------------- CONFIG ---------------------------------------\n# BUILD_DEMO = True  -> builds a test scene (grid -> anim -> POP sim) inside\n#                       DEMO_PARENT and rigs it. Good for an empty geo node.\n# BUILD_DEMO = False -> rigs YOUR scene: set the paths below. If SIM_NODE is\n#                       left \"\" the first SELECTED node is used.\nBUILD_DEMO   = True\nDEMO_PARENT  = \"/obj/geo1\"\n\nSIM_NODE     = \"\"   # live sim particles, every frame (needs i@id, f@age)\nEMITTER_NODE = \"\"   # emitter in the SAME space as SIM_NODE (\"\" = none)\nDEFORM_NODE  = \"\"   # geometry to deform, in REST pose (\"\" = auto scatter demo / skip)\nREST_FRAME   = 240  # frame whose particle layout is the rest shape\n# ----------------------------------------------------------------------------\n\n\ndef build_demo(parent_path):\n    \"\"\"grid -> anim (rises, tiny) -> popnet (source + wind). Returns (sim, emitter).\"\"\"\n    geo = hou.node(parent_path)\n    if geo is None:\n        geo = hou.node(\"/obj\").createNode(\"geo\", parent_path.rsplit(\"/\", 1)[-1])\n    grid = geo.createNode(\"grid\", \"demo_grid\")\n    anim = geo.createNode(\"xform\", \"demo_anim\")\n    anim.setInput(0, grid)\n    anim.parm(\"scale\").set(0.03)\n    ty = anim.parm(\"ty\")\n    for fr, v in ((1, 0.0), (240, 3.3)):\n        k = hou.Keyframe(); k.setFrame(fr); k.setValue(v); k.setExpression(\"linear()\")\n        ty.setKeyframe(k)\n    dop = geo.createNode(\"dopnet\", \"demo_popnet\")\n    dop.setInput(0, anim)\n    dop.parm(\"objname1\").set(\"*\") if dop.parm(\"objname1\") else None\n    obj = dop.createNode(\"popobject\", \"popobject\")\n    src = dop.createNode(\"popsource\", \"source_first_input\")\n    src.parm(\"usecontextgeo\").set(2)          # first context geometry (the anim input)\n    src.parm(\"constantrate\").set(50)\n    wind = dop.createNode(\"popwind\", \"popwind1\")\n    wind.setInput(0, src)\n    wind.parm(\"windy\").set(1); wind.parm(\"amp\").set(1); wind.parm(\"swirlsize\").set(0.67)\n    merge = dop.createNode(\"merge\", \"wire_pops_into_here\")\n    merge.setInput(0, wind)\n    solver = dop.createNode(\"popsolver\", \"popsolver\")\n    solver.setInput(0, obj); solver.setInput(2, merge)\n    out = dop.createNode(\"output\", \"output\")\n    out.setInput(0, solver)\n    out.setDisplayFlag(True)\n    dop.layoutChildren()\n    geo.layoutChildren()\n    return dop, anim\n\n\nif BUILD_DEMO:\n    sim, emitter = build_demo(DEMO_PARENT)\n    deform_src = None          # a scatter of the rest shape is built below\nelse:\n    sim = hou.node(SIM_NODE) if SIM_NODE else (hou.selectedNodes() or [None])[0]\n    if sim is None:\n        raise hou.Error(\"Set SIM_NODE (or select the sim node) - not found: %r\" % SIM_NODE)\n    emitter = hou.node(EMITTER_NODE) if EMITTER_NODE else None\n    deform_src = hou.node(DEFORM_NODE) if DEFORM_NODE else None\nnet = sim.parent()\nbase = sim.position()\n\n\ndef mk(type_name, name, dx, dy):\n    n = net.createNode(type_name, name)\n    n.setPosition(base + hou.Vector2(dx, dy))\n    return n\n\n\ndef add_float(node, name, label, default, lo, hi):\n    ptg = node.parmTemplateGroup()\n    ptg.append(hou.FloatParmTemplate(name, label, 1, default_value=(default,), min=lo, max=hi))\n    node.setParmTemplateGroup(ptg)\n\n\ndef add_int(node, name, label, default, lo, hi):\n    ptg = node.parmTemplateGroup()\n    ptg.append(hou.IntParmTemplate(name, label, 1, default_value=(default,), min=lo, max=hi))\n    node.setParmTemplateGroup(ptg)\n\n\n# 1) rest layout = sim held at REST_FRAME ------------------------------------\nrest = mk(\"timeshift\", \"follow_rest\", 3, -1)\nrest.setInput(0, sim)\nrest.parm(\"frame\").deleteAllKeyframes()   # default is a $F expression; clear it\nrest.parm(\"frame\").set(REST_FRAME)\n\n# 2) per-frame info on the live sim: where the emitter is right now ----------\ninfo = mk(\"attribwrangle\", \"follow_sim_info\", 6, -1)\ninfo.setInput(0, sim)\nif emitter is not None:\n    info.setInput(1, emitter)\ninfo.parm(\"class\").set(0)  # detail\ninfo.parm(\"snippet\").set(r'''\n// anchor position: emitter centre if one is wired, else the live cloud centre\nv@emitpos = npoints(1) > 0 ? getbbox_center(1) : getbbox_center(0);\n''')\n\n# 3) mark which rest points exist in the live sim this frame -----------------\nmark = mk(\"attribwrangle\", \"follow_mark_born\", 3, -2.5)\nmark.setInput(0, rest)\nmark.setInput(1, sim)\nmark.parm(\"snippet\").set(r'''\nint src = idtopoint(1, i@id);\ni@born  = src >= 0;\ni@srcpt = src;\n''')\n\n# 4) live-only point cloud (rest-layout P) for fast neighbour search ---------\nborn = mk(\"attribwrangle\", \"follow_born_only\", 6, -3.5)\nborn.setInput(0, mark)\nborn.parm(\"snippet\").set('if (!i@born) removepoint(0, @ptnum);')   # no group parsing -> works in any version\n\n# 5) the follow itself --------------------------------------------------------\nfol = mk(\"attribwrangle\", \"follow_live\", 3, -5)\nfol.setInput(0, mark)\nfol.setInput(1, info)   # live sim P / age + detail emitpos\nfol.setInput(2, born)   # live-only cloud\nadd_float(fol, \"blend_time\", \"Blend Time (s)\", 0.5, 0, 5)\nadd_float(fol, \"radius\", \"Closest Radius\", 0.2, 0.001, 3)\nadd_float(fol, \"anchor_weight\", \"Emitter Anchor Weight\", 1.0, 0, 50)\nadd_int(fol, \"max_neighbours\", \"Max Neighbours\", 64, 8, 2048)   # 256 = smoother, 32 = faster\nadd_float(fol, \"rest_frame\", \"Rest Frame\", REST_FRAME, 1, 1000)\nfol.parm(\"rest_frame\").setExpression('ch(\"../%s/frame\")' % rest.name())\nfol.parm(\"snippet\").set(r'''\n// Weighted CURRENT position of live neighbours; closest in the rest layout wins.\n// Gaussian weight (radius = Closest Radius) is \u003c 1e-4 beyond 3*radius, so only\n// that radius is searched: cost ~ N * neighbours, not N * N.\n// A newborn's vote fades in over Blend Time, so nothing jumps.\nfunction vector neighbourPos(vector rest; int selfid; float radius; float fade;\n                             float wa; int maxn; vector anchor) {\n    float h = max(radius, 1e-4);\n    int near[] = pcfind(2, \"P\", rest, 3 * h, maxn);\n    vector sum = 0; float wsum = 0;\n    foreach (int n; near) {\n        if (point(2, \"id\", n) == selfid) continue;\n        int s = point(2, \"srcpt\", n);\n        vector nRest = point(2, \"P\", n);\n        vector nNow  = point(1, \"P\", s);\n        float d = distance(rest, nRest) / h;\n        float w = exp(-d * d);\n        if (fade > 0) w *= smooth(0, 1, point(1, \"age\", s) / fade);\n        sum += nNow * w; wsum += w;\n    }\n    // emitter = constant-vote anchor: dominates while few particles are alive,\n    // gets outvoted naturally as the sim fills up (keeps early frames steady)\n    sum += anchor * wa; wsum += wa;\n    return wsum > 0 ? sum / wsum : rest;\n}\n\nfloat blend   = chf(\"blend_time\");\nvector anchor = detail(1, \"emitpos\");\nvector rest   = v@P;\nvector taken  = neighbourPos(rest, i@id, chf(\"radius\"), blend,\n                             chf(\"anchor_weight\"), chi(\"max_neighbours\"), anchor);\n\nif (i@born) {\n    // ease from the borrowed pose into the real sim so birth never pops ...\n    vector real = point(1, \"P\", i@srcpt);\n    float age = point(1, \"age\", i@srcpt);\n    float t = blend > 0 ? smooth(0, 1, age / blend) : 1;\n    // ... and be fully on the sim by the rest frame, so the deform matches rest\n    float restT = (chf(\"rest_frame\") - 1) * @TimeInc;   // time = (frame-1)/fps\n    if (blend > 0) t = max(t, smooth(restT - blend, restT, @Time));\n    v@P = lerp(taken, real, t);\n} else {\n    v@P = taken;\n}\n''')\n\nout = mk(\"null\", \"OUT_follow_live\", 3, -6.2)\nout.setInput(0, fol)\ncreated = [rest, info, mark, born, fol, out]\n\nif BUILD_DEMO:\n    con = mk(\"connectadjacentpieces\", \"demo_connect\", -3, -2.5)\n    con.setInput(0, rest)\n    con.parm(\"connecttype\").set(2); con.parm(\"maxsearchpoints\").set(28)\n    sc = mk(\"scatter\", \"demo_scatter\", -3, -3.7)\n    sc.setInput(0, con)\n    sc.parm(\"npts\").set(100000)\n    deform_src = mk(\"null\", \"demo_rest_geo\", -3, -4.9)\n    deform_src.setInput(0, sc)\n    created += [con, sc, deform_src]\n\n# 6) optional: Point Deform the rest geometry with the lattice ----------------\nif deform_src is not None:\n    pd = mk(\"pointdeform\", \"follow_pointdeform\", 0, -7.4)\n    pd.setInput(0, deform_src)\n    pd.setInput(1, rest)\n    pd.setInput(2, out)\n    out_d = mk(\"null\", \"OUT_follow_deform\", 0, -8.6)\n    out_d.setInput(0, pd)\n    out_d.setDisplayFlag(True)\n    out_d.setRenderFlag(True)\n    created += [pd, out_d]\nelse:\n    out.setDisplayFlag(True)\n    out.setRenderFlag(True)\n\nprint(\"follow rig built: \" + \", \".join(n.name() for n in created))\n", "visual": "rig-graph"}, {"id": "follow-live-vex", "title": "follow_live — closest live position", "lang": "vex", "context": "Attribute Wrangle · Points", "tested": "Houdini 21.0.671", "filename": "follow_live.vfl", "description": "หัวใจของ rig: ตำแหน่งปัจจุบันเฉลี่ยแบบ Gaussian ของพาร์ติเคิลที่มีชีวิตใกล้ๆ ในเลย์เอาต์ rest + emitter เป็นตัวถ่วงช่วงต้นซีน + blend เข้าซิมจริงหลังเกิด และบังคับให้ blend ครบภายในเฟรม rest", "notes": "Inputs: 0 = rest points ที่มี i@born, i@srcpt · 1 = live sim ที่มี detail v@emitpos · 2 = live-only cloud\nSpare parms ที่ต้องสร้าง: blend_time, radius, anchor_weight, max_neighbours (int), rest_frame\nอย่าใช้ ch(\"../node/parm\") ใน VEX เพื่ออ่านค่าจาก node อื่น เพราะ path จะหาไม่เจอแล้วได้ 0 ให้ link ผ่าน spare parm แทน", "code": "// Weighted CURRENT position of live neighbours; closest in the rest layout wins.\n// Gaussian weight (radius = Closest Radius) is \u003c 1e-4 beyond 3*radius, so only\n// that radius is searched: cost ~ N * neighbours, not N * N.\n// A newborn's vote fades in over Blend Time, so nothing jumps.\nfunction vector neighbourPos(vector rest; int selfid; float radius; float fade;\n                             float wa; int maxn; vector anchor) {\n    float h = max(radius, 1e-4);\n    int near[] = pcfind(2, \"P\", rest, 3 * h, maxn);\n    vector sum = 0; float wsum = 0;\n    foreach (int n; near) {\n        if (point(2, \"id\", n) == selfid) continue;\n        int s = point(2, \"srcpt\", n);\n        vector nRest = point(2, \"P\", n);\n        vector nNow  = point(1, \"P\", s);\n        float d = distance(rest, nRest) / h;\n        float w = exp(-d * d);\n        if (fade > 0) w *= smooth(0, 1, point(1, \"age\", s) / fade);\n        sum += nNow * w; wsum += w;\n    }\n    // emitter = constant-vote anchor: dominates while few particles are alive,\n    // gets outvoted naturally as the sim fills up (keeps early frames steady)\n    sum += anchor * wa; wsum += wa;\n    return wsum > 0 ? sum / wsum : rest;\n}\n\nfloat blend   = chf(\"blend_time\");\nvector anchor = detail(1, \"emitpos\");\nvector rest   = v@P;\nvector taken  = neighbourPos(rest, i@id, chf(\"radius\"), blend,\n                             chf(\"anchor_weight\"), chi(\"max_neighbours\"), anchor);\n\nif (i@born) {\n    // ease from the borrowed pose into the real sim so birth never pops ...\n    vector real = point(1, \"P\", i@srcpt);\n    float age = point(1, \"age\", i@srcpt);\n    float t = blend > 0 ? smooth(0, 1, age / blend) : 1;\n    // ... and be fully on the sim by the rest frame, so the deform matches rest\n    float restT = (chf(\"rest_frame\") - 1) * @TimeInc;   // time = (frame-1)/fps\n    if (blend > 0) t = max(t, smooth(restT - blend, restT, @Time));\n    v@P = lerp(taken, real, t);\n} else {\n    v@P = taken;\n}\n", "visual": "follow-concept"}, {"id": "mark-born-vex", "title": "mark_born — does this id exist yet?", "lang": "vex", "context": "Attribute Wrangle · Points", "tested": "Houdini 21.0.671", "filename": "mark_born.vfl", "description": "ต่อ input 0 = ท่า rest (timeshift ไปที่เฟรมสุดท้าย) และ input 1 = live sim แล้วจะเขียน i@born กับ i@srcpt (index ของพอยต์นั้นในซิมตอนนี้ ถ้ายังไม่เกิดจะเป็น -1)", "notes": "idtopoint() ต้องใช้ i@id ที่ไม่ซ้ำกัน ซึ่ง POP สร้างให้อยู่แล้ว", "code": "int src = idtopoint(1, i@id);\ni@born  = src >= 0;\ni@srcpt = src;\n", "visual": "born-mask"}, {"id": "born-only-vex", "title": "born_only — keep live points only", "lang": "vex", "context": "Attribute Wrangle · Points", "tested": "Houdini 21.0.671", "filename": "born_only.vfl", "description": "ลบพอยต์ที่ยังไม่เกิดทิ้ง ใช้แทน Blast @born==0 เพราะไม่ต้องพึ่งการอ่าน group จึงใช้ได้ทุกเวอร์ชัน", "notes": "", "code": "if (!i@born) removepoint(0, @ptnum);\n", "visual": "born-only"}, {"id": "patch-born-only", "title": "Patch: follow_born_only Blast → wrangle", "lang": "python", "context": "Python Shell", "tested": "Houdini 21.0.671", "filename": "patch_born.py", "description": "แก้ rig ที่สร้างไปแล้ว: เปลี่ยน follow_born_only จาก Blast (group @born==0) เป็น wrangle ที่ลบพอยต์ตรงๆ แล้วต่อสายเดิมให้", "notes": "ใช้เมื่อขึ้นว่าหา attribute born ไม่เจอ (เดาว่า Blast ใน 20.5 อ่าน @born==0 เป็น prim group) · ตัว v2 ใช้ wrangle อยู่แล้ว ไม่ต้อง patch ซ้ำ", "code": "# ---- patch: replace follow_born_only (Blast) with a wrangle ----------------\nimport hou\nold = [n for n in hou.node(\"/obj\").allSubChildren() if n.name() == \"follow_born_only\"]\nif not old:\n    raise hou.Error(\"follow_born_only not found - run the rig script first\")\nfor b in old:\n    net = b.parent()\n    src = b.inputs()[0]\n    w = net.createNode(\"attribwrangle\", \"follow_born_only_w\")\n    w.setPosition(b.position())\n    w.setInput(0, src)\n    w.parm(\"snippet\").set('if (!i@born) removepoint(0, @ptnum);')\n    for con in b.outputConnections():\n        con.outputNode().setInput(con.inputIndex(), w)\n    b.destroy()\n    w.setName(\"follow_born_only\")\n    print(\"patched\", w.path())\n", "visual": "patch-swap"}]}]}]}</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script id="app-js">
+(function(){
+  // Pristine copy of this document (own scripts only), taken before rendering.
+  // Saving regenerates the page from this + the new data, never from the live DOM.
+  var PRISTINE = (function(){
+    var root = document.documentElement.cloneNode(true);
+    root.querySelectorAll("script").forEach(function(sc){
+      var src = sc.getAttribute("src") || "";
+      if (sc.id !== "lib-data" && sc.id !== "app-js" && src.indexOf("https://cdnjs.cloudflare.com/") !== 0) sc.remove();
+    });
+    return "<!doctype html>" + String.fromCharCode(10) + root.outerHTML;
+  })();
+
+  var DB = { techniques: [] };
+  try { DB = JSON.parse(document.getElementById("lib-data").textContent); } catch(e) {}
+  if (!DB.techniques) DB.techniques = [];
+
+  var TYPES = ["Sop","Dop","Object","Lop","Cop","Vop","Top","Shelf","Other"];
+  var LANG_LABEL = {python:"Python", vex:"VEX"};
+  var artifactApi = null, assetsApi = null;
+  var $ = function(id){ return document.getElementById(id); };
+  var esc = function(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); };
+  var clone = function(o){ return JSON.parse(JSON.stringify(o)); };
+  var today = function(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
+  var uid = function(p){ return p + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); };
+
+  var state = { q:"", tid:null, ver:{}, fid:null, mode:"view", draft:null, confirm:false };
+  try { var h=(location.hash||"").slice(1); if (h) state.tid=h; } catch(e){}
+  if (!tech(state.tid)) state.tid = DB.techniques.length ? DB.techniques[0].id : null;
+
+  function tech(id){ return DB.techniques.find(function(t){return t.id===id;}); }
+  function lastVer(t){ return t.versions[t.versions.length-1]; }
+  function verOf(t){ var v=state.ver[t.id]; return t.versions.find(function(x){return x.v===v;}) || lastVer(t); }
+  function nextV(t){ var n=0; t.versions.forEach(function(x){ var k=parseInt(String(x.v).replace(/\D/g,""),10); if(k>n)n=k; }); return "v"+String(n+1).padStart(3,"0"); }
+
+  // ---------------- diagrams (inline SVG, colours from theme tokens) ----------------
+  function fig(body, caption){
+    return '<figure class="visual"><div class="scroll">'+body+'</div>'+(caption?'<figcaption>'+caption+'</figcaption>':'')+'</figure>';
+  }
+  function network(nodes, wires, vw, vh){
+    var W=170,H=40, byId={};
+    nodes.forEach(function(n){ byId[n.id]=n; });
+    function inPort(n,i){ var k=n.ins||1; return [n.x+W*(i+1)/(k+1), n.y]; }
+    function outPort(n){ return [n.x+W/2, n.y+H]; }
+    var g = wires.map(function(w){
+      var a=outPort(byId[w[0]]), b=inPort(byId[w[1]], w[2]||0), dy=Math.max(30,(b[1]-a[1])*0.5);
+      return '<path class="wire" d="M'+a[0]+' '+a[1]+' C'+a[0]+' '+(a[1]+dy)+' '+b[0]+' '+(b[1]-dy)+' '+b[0]+' '+b[1]+'"/>';
+    }).join("");
+    g += nodes.map(function(n){
+      var ports='', k=n.ins||0;
+      for (var i=0;i<k;i++){ var p=inPort(n,i); ports+='<circle class="port" cx="'+p[0]+'" cy="'+p[1]+'" r="3.5"/>'; }
+      var o=outPort(n);
+      return '<g class="node '+(n.cls||"")+'"><rect x="'+n.x+'" y="'+n.y+'" width="'+W+'" height="'+H+'" rx="5"/>'+
+        '<rect class="flag" x="'+n.x+'" y="'+n.y+'" width="5" height="'+H+'" rx="2"/>'+
+        '<text x="'+(n.x+14)+'" y="'+(n.y+17)+'" font-size="12.5" font-weight="500">'+esc(n.name)+'</text>'+
+        '<text class="sub" x="'+(n.x+14)+'" y="'+(n.y+31)+'">'+esc(n.sub||"")+'</text>'+
+        ports+'<circle class="port" cx="'+o[0]+'" cy="'+o[1]+'" r="3.5"/></g>';
+    }).join("");
+    return '<svg viewBox="0 0 '+vw+' '+vh+'" role="img" aria-label="Node network">'+g+'</svg>';
+  }
+  var VISUALS = {
+    "rig-graph": function(){
+      var nodes=[
+        {id:"sim",  x:20,  y:14,  name:"SIM_NODE", sub:"live particles · every frame", cls:"io"},
+        {id:"emit", x:300, y:14,  name:"EMITTER_NODE", sub:"optional · same space", cls:"io"},
+        {id:"geo",  x:590, y:14,  name:"DEFORM_NODE", sub:"geometry in rest pose", cls:"io"},
+        {id:"rest", x:20,  y:104, name:"follow_rest", sub:"timeshift → REST_FRAME", ins:1},
+        {id:"info", x:300, y:104, name:"follow_sim_info", sub:"detail v@emitpos", ins:2},
+        {id:"mark", x:110, y:194, name:"follow_mark_born", sub:"i@born · i@srcpt", ins:2},
+        {id:"only", x:390, y:274, name:"follow_born_only", sub:"live points only", ins:1},
+        {id:"fol",  x:110, y:354, name:"follow_live", sub:"closest live position", ins:3, cls:"key"},
+        {id:"out",  x:110, y:434, name:"OUT_follow_live", sub:"deformed lattice", ins:1},
+        {id:"pd",   x:470, y:434, name:"follow_pointdeform", sub:"geo · rest · deformed", ins:3},
+        {id:"outd", x:470, y:514, name:"OUT_follow_deform", sub:"display", ins:1, cls:"key"}
+      ];
+      var wires=[["sim","rest",0],["sim","info",0],["emit","info",1],["rest","mark",0],["sim","mark",1],
+        ["mark","only",0],["mark","fol",0],["info","fol",1],["only","fol",2],["fol","out",0],
+        ["geo","pd",0],["rest","pd",1],["out","pd",2],["pd","outd",0]];
+      return fig(network(nodes,wires,780,570),
+        'สิ่งที่สคริปต์สร้าง: node สีฟ้าคือของที่พี่ชี้ path ใน CONFIG ส่วน node สีส้มคือตัวที่ทำงานหลักและตัวที่ต้องดูผล · inputs อยู่ขอบบน output อยู่ขอบล่าง แบบ Houdini');
+    },
+    "follow-concept": function(){
+      var born=[[80,236],[120,214],[152,244],[100,184],[172,204],[140,164],[192,176],[210,144],[160,128],[265,148],[186,118],[232,190]];
+      var unborn=[[232,104],[205,88],[255,78],[222,58],[270,112],[195,66]];
+      var U=[240,106], h=42, emitNow=[600,262];
+      function now(p){ return [400+p[0]*0.62+40, p[1]*0.42+150]; }
+      function taken(p){
+        var sx=0,sy=0,sw=0;
+        born.forEach(function(b){ var d=Math.hypot(p[0]-b[0],p[1]-b[1])/h, w=Math.exp(-d*d); var n=now(b); sx+=n[0]*w; sy+=n[1]*w; sw+=w; });
+        var wa=0.05; sx+=emitNow[0]*wa; sy+=emitNow[1]*wa; sw+=wa;
+        return [sx/sw, sy/sw];
+      }
+      var near=born.filter(function(b){ return Math.hypot(U[0]-b[0],U[1]-b[1]) < h*1.6; });
+      var s='<rect class="frame" x="10" y="26" width="370" height="252" rx="6"/><rect class="frame" x="410" y="26" width="370" height="252" rx="6"/>';
+      s+='<text class="lbl" x="22" y="18">REST · frame 240 (timeshift)</text><text class="lbl" x="422" y="18">NOW · frame 40 (live sim)</text>';
+      s+='<circle class="radius" cx="'+U[0]+'" cy="'+U[1]+'" r="'+(h*1.6)+'"/>';
+      born.forEach(function(b){ s+='<circle class="'+(near.indexOf(b)>=0?"hot":"born")+'" cx="'+b[0]+'" cy="'+b[1]+'" r="5"/>'; });
+      unborn.forEach(function(p){ s+='<circle class="unborn" cx="'+p[0]+'" cy="'+p[1]+'" r="5"/>'; });
+      s+='<circle class="target" cx="'+U[0]+'" cy="'+U[1]+'" r="7"/>';
+      s+='<text class="sub" x="'+(U[0]+12)+'" y="'+(U[1]-40)+'">Closest Radius</text><text class="sub" x="'+(U[0]+14)+'" y="'+(U[1]+4)+'">ยังไม่เกิด</text>';
+      s+='<rect class="emit" x="'+(emitNow[0]-40)+'" y="'+(emitNow[1]-4)+'" width="80" height="8" rx="2"/><text class="sub" x="'+(emitNow[0]+46)+'" y="'+(emitNow[1]+4)+'">emitter</text>';
+      born.forEach(function(b){ var n=now(b); s+='<circle class="'+(near.indexOf(b)>=0?"hot":"born")+'" cx="'+n[0].toFixed(1)+'" cy="'+n[1].toFixed(1)+'" r="5"/>'; });
+      var T=taken(U);
+      near.forEach(function(b){ var n=now(b); s+='<line class="pull" x1="'+n[0].toFixed(1)+'" y1="'+n[1].toFixed(1)+'" x2="'+T[0].toFixed(1)+'" y2="'+T[1].toFixed(1)+'"/>'; });
+      unborn.forEach(function(p){ if(p===U) return; var t=taken(p); s+='<circle class="unborn" cx="'+t[0].toFixed(1)+'" cy="'+t[1].toFixed(1)+'" r="5"/>'; });
+      s+='<circle class="target" cx="'+T[0].toFixed(1)+'" cy="'+T[1].toFixed(1)+'" r="7"/>';
+      s+='<text class="sub" x="'+(T[0]+12).toFixed(1)+'" y="'+(T[1]-10).toFixed(1)+'">weighted avg ของเพื่อน</text>';
+      s+='<circle class="born" cx="22" cy="300" r="5"/><text class="sub" x="32" y="304">เกิดแล้ว</text>'+
+         '<circle class="hot" cx="102" cy="300" r="5"/><text class="sub" x="112" y="304">เพื่อนที่อยู่ในรัศมี</text>'+
+         '<circle class="unborn" cx="232" cy="300" r="5"/><text class="sub" x="242" y="304">ยังไม่เกิด</text>'+
+         '<circle class="target" cx="318" cy="300" r="6"/><text class="sub" x="330" y="304">พอยต์ที่กำลังดู</text>';
+      return fig('<svg viewBox="0 0 790 316" role="img" aria-label="Unborn point borrows the current positions of its rest-layout neighbours">'+s+'</svg>',
+        'ซ้าย: หาเพื่อนที่เกิดแล้วซึ่งอยู่ใกล้ในท่า rest (ภายในรัศมี) · ขวา: เอาตำแหน่งตอนนี้ของเพื่อนกลุ่มนั้นมาเฉลี่ยแบบ Gaussian (ตัวที่ใกล้กว่ามีน้ำหนักมากกว่า) บวก emitter เป็นตัวถ่วงเล็กน้อย · ภาพนี้คำนวณจากสูตรเดียวกับใน VEX');
+    },
+    "born-mask": function(opts){
+      var ids=[0,1,2,3,4,5,6,7,8,9], live=[0,1,2,3,4,5];
+      function row(label, cells, hl){ return '<tr'+(hl?' class="hl"':'')+'><th>'+label+'</th>'+cells.join("")+'</tr>'; }
+      var r = row("rest id (frame 240)", ids.map(function(i){return '<td>'+i+'</td>';}));
+      r += row("อยู่ในซิมตอนนี้?", ids.map(function(i){return live.indexOf(i)>=0?'<td class="y">✓</td>':'<td class="n">—</td>';}));
+      r += row("i@born", ids.map(function(i){return '<td class="'+(live.indexOf(i)>=0?"y":"n")+'">'+(live.indexOf(i)>=0?1:0)+'</td>';}), !opts);
+      r += row("i@srcpt", ids.map(function(i){var k=live.indexOf(i); return '<td class="'+(k>=0?"":"n")+'">'+(k>=0?k:-1)+'</td>';}));
+      if (opts) r += row("born_only", ids.map(function(i){return live.indexOf(i)>=0?'<td class="y">keep</td>':'<td class="gone">'+i+'</td>';}), true);
+      return fig('<table class="mask">'+r+'</table>', opts
+        ? 'born_only ลบพอยต์ที่ i@born = 0 ทิ้ง เหลือแค่พาร์ติเคิลที่มีชีวิตเป็น point cloud ให้ pcfind ค้น ตัวอย่างนี้คือเฟรมที่ id 0–5 เกิดแล้ว'
+        : 'ตัวอย่างเฟรมที่ id 0–5 เกิดแล้ว: idtopoint() หา id ในซิมตอนนี้ ถ้าเจอจะได้ index (i@srcpt) ถ้าไม่เจอได้ −1 จึงเป็น i@born = 0');
+    },
+    "patch-swap": function(){
+      var s='<text class="lbl" x="20" y="18">BEFORE</text><text class="lbl" x="420" y="18">AFTER</text>';
+      var nb=[{id:"a",x:20,y:30,name:"follow_mark_born",sub:"i@born · i@srcpt",ins:2},{id:"b",x:20,y:120,name:"follow_born_only",sub:"Blast · group @born==0",ins:1},{id:"c",x:20,y:210,name:"follow_live",sub:"input 2",ins:3}];
+      var na=[{id:"a",x:420,y:30,name:"follow_mark_born",sub:"i@born · i@srcpt",ins:2},{id:"b",x:420,y:120,name:"follow_born_only",sub:"Wrangle · removepoint",ins:1,cls:"key"},{id:"c",x:420,y:210,name:"follow_live",sub:"input 2 (rewired)",ins:3}];
+      var w=[["a","b",0],["b","c",2]];
+      var strip=function(x){ return x.replace(/^<svg[^>]*>|<\/svg>$/g,""); };
+      s+=strip(network(nb,w,380,260))+strip(network(na,w,380,260))+'<path class="pull" d="M230 140 L400 140"/><text class="sub" x="262" y="132">patch_born.py</text>';
+      return fig('<svg viewBox="0 0 620 262" role="img" aria-label="Blast replaced by a wrangle">'+s+'</svg>',
+        'patch หา node ชื่อ follow_born_only เปลี่ยนเป็น wrangle ที่ชื่อเดิม ตำแหน่งเดิม แล้วต่อสาย output กลับเข้า input เดิมให้ · ผลลัพธ์เหมือนเวอร์ชัน Blast ทุกพอยต์');
+    }
+  };
+  VISUALS["born-only"] = function(){ return VISUALS["born-mask"](true); };
+
+  // ---------------- tree ----------------
+  function matches(t){
+    var q = state.q.trim().toLowerCase(); if (!q) return true;
+    var hay = [t.name,t.category,t.type,t.author].concat(t.versions.map(function(v){
+      return [v.notes].concat(v.files.map(function(f){return [f.title,f.description,f.notes,f.code].join(" ");})).join(" ");
+    })).join("\n").toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }
+  function renderTree(){
+    var n = DB.techniques.length, files = 0;
+    DB.techniques.forEach(function(t){ files += verOf(t).files.length; });
+    $("count").textContent = n + " technique" + (n===1?"":"s") + " · " + files + " files";
+    var groups = {};
+    DB.techniques.filter(matches).forEach(function(t){ (groups[t.category||"Uncategorised"]=groups[t.category||"Uncategorised"]||[]).push(t); });
+    var keys = Object.keys(groups).sort();
+    if (!keys.length){ $("tree").innerHTML='<div class="empty">'+(n?"No technique matches.":"No techniques yet.")+'</div>'; return; }
+    $("tree").innerHTML = keys.map(function(k){
+      return '<details class="grp" open><summary>'+esc(k)+'<span class="n">'+groups[k].length+'</span></summary>'+
+        groups[k].map(function(t){
+          var cur = verOf(t).v, sid = "ver-"+t.id;
+          return '<div class="trow" aria-current="'+(t.id===state.tid)+'">'+
+            '<button class="name" type="button" data-pick="'+esc(t.id)+'" title="'+esc(t.name)+'">'+esc(t.name)+'</button>'+
+            '<span class="type">'+esc(t.type||"")+'</span>'+
+            '<select id="'+esc(sid)+'" data-ver="'+esc(t.id)+'" aria-label="Version of '+esc(t.name)+'">'+
+              t.versions.map(function(v){ return '<option'+(v.v===cur?" selected":"")+'>'+esc(v.v)+'</option>'; }).join("")+
+            '</select></div>';
+        }).join("")+'</details>';
+    }).join("");
+  }
+
+  // ---------------- view ----------------
+  function previewHtml(v){
+    if (v.previewImage) return '<img src="/_blob/'+esc(v.previewImage)+'" alt="Preview">';
+    var key = v.previewVisual || (v.files.find(function(f){return f.visual && VISUALS[f.visual];})||{}).visual;
+    if (key && VISUALS[key]) return VISUALS[key]();
+    return '<div class="phold">ยังไม่มี preview · กด Edit แล้ว paste ภาพหน้าจอจาก Houdini ได้เลย</div>';
+  }
+  function renderView(){
+    var t = tech(state.tid), main = $("main");
+    if (!t){ main.innerHTML = '<div class="empty">'+(DB.techniques.length?"Pick a technique on the left.":"No techniques yet — press + New technique.")+'</div>'; return; }
+    var v = verOf(t);
+    if (!v.files.some(function(f){return f.id===state.fid;})) state.fid = v.files.length ? v.files[0].id : null;
+    var f = v.files.find(function(x){return x.id===state.fid;});
+    var multi = t.versions.length > 1;
+    var html =
+      '<article class="detail">'+
+        '<div class="dhead"><div><h2>'+esc(t.name)+'</h2>'+
+          '<div class="dmeta"><span class="pill type">'+esc(t.type||"—")+'</span><span class="pill ver">'+esc(v.v)+'</span>'+
+          '<span>'+esc(t.category||"Uncategorised")+'</span><span>·</span><span>'+esc(t.author||"—")+'</span><span>·</span><span>'+esc(v.date||"")+'</span></div></div>'+
+          (artifactApi ? '<div class="actions"><button class="btn" type="button" id="editBtn">Edit '+esc(v.v)+'</button>'+
+            '<button class="btn" type="button" id="newVerBtn">New version</button>'+
+            '<button class="btn danger" type="button" id="delBtn">Delete…</button></div>' : '')+
+        '</div>'+
+        (state.confirm ? '<div class="confirm">'+(multi ? 'Delete version '+esc(v.v)+' of “'+esc(t.name)+'”? The other versions stay.' : 'Delete “'+esc(t.name)+'” and its only version?')+
+          ' <button class="btn danger" type="button" id="delYes">Delete</button><button class="btn" type="button" id="delNo">Keep it</button></div>' : '')+
+        '<div class="pv"><div class="preview">'+previewHtml(v)+'</div>'+
+          '<div class="notesbox"><h3>Notes · '+esc(v.v)+'</h3><p>'+(v.notes?esc(v.notes):'<span style="color:var(--ink-3)">—</span>')+'</p></div></div>'+
+        '<h3 class="sect">Files in '+esc(v.v)+'</h3>'+
+        (v.files.length ? '<div class="tabs" role="tablist">'+v.files.map(function(x){
+            return '<button class="tab" type="button" role="tab" data-file="'+esc(x.id)+'" aria-selected="'+(x.id===state.fid)+'"><span class="lang '+esc(x.lang)+'">'+esc(LANG_LABEL[x.lang]||x.lang)+'</span>'+esc(x.title||x.filename||"Untitled")+'</button>';
+          }).join("")+'</div>' : '<div class="empty">No files in this version.</div>')+
+        (f ? fileHtml(f, v) : '')+
+      '</article>';
+    main.innerHTML = html;
+    var codeEl = $("codeEl");
+    if (codeEl){ codeEl.textContent = f.code; if (window.hljs) { try { window.hljs.highlightElement(codeEl); } catch(e){} } }
+  }
+  function fileHtml(f, v){
+    var shownInPreview = !v.previewImage && (v.previewVisual || (v.files.find(function(x){return x.visual && VISUALS[x.visual];})||{}).visual) === f.visual;
+    return '<div class="fpanel" role="tabpanel">'+
+      '<dl class="meta">'+
+        '<div><dt>Language</dt><dd>'+esc(LANG_LABEL[f.lang]||f.lang)+'</dd></div>'+
+        '<div><dt>Where to paste</dt><dd>'+esc(f.context||"—")+'</dd></div>'+
+        '<div><dt>Tested on</dt><dd>'+esc(f.tested||"—")+'</dd></div>'+
+        '<div><dt>Lines</dt><dd>'+String(f.code||"").split("\n").length+'</dd></div>'+
+      '</dl>'+
+      (f.description ? '<p class="desc">'+esc(f.description)+'</p>' : '')+
+      (f.visual && VISUALS[f.visual] && !shownInPreview ? VISUALS[f.visual]() : '')+
+      (f.notes ? '<p class="fnotes"><b>Notes · </b>'+esc(f.notes)+'</p>' : '')+
+      '<div class="codebox"><div class="codebar"><span>'+esc(f.filename||(f.lang==="vex"?"snippet.vfl":"snippet.py"))+'</span>'+
+        '<button class="btn" type="button" id="copyBtn">Copy code</button></div>'+
+        '<pre><code id="codeEl" class="language-'+(f.lang==="vex"?"c":"python")+'"></code></pre></div></div>';
+  }
+
+  // ---------------- editor ----------------
+  function blankFile(){ return {id:uid("f"),title:"",lang:"python",context:"Python Shell",tested:"",filename:"",description:"",notes:"",code:"",visual:""}; }
+  function openEditor(kind){
+    var t = tech(state.tid), d;
+    if (kind==="new") d = {kind:kind, tech:{id:uid("t"),name:"",category:"",type:"Sop",author:"Plug",versions:[]}, ver:{v:"v001",date:today(),notes:"",previewImage:"",previewVisual:"",files:[blankFile()]}};
+    else if (kind==="newver"){ var base=clone(verOf(t)); base.v=nextV(t); base.date=today(); base.files.forEach(function(f){ f.id=uid("f"); }); d={kind:kind, tech:clone(t), ver:base}; }
+    else d = {kind:kind, tech:clone(t), ver:clone(verOf(t))};
+    state.draft = d; state.mode = "edit"; state.confirm = false; renderEditor();
+  }
+  function fileCard(f, i){
+    var p = "f"+i+"-";
+    return '<div class="card" data-idx="'+i+'"><div class="fhead"><h3>File '+(i+1)+'</h3><button class="btn small danger" type="button" data-rmfile="'+i+'">Remove file</button></div>'+
+      '<div class="row">'+
+        '<label for="'+p+'title">Title<input id="'+p+'title" data-k="title" value="'+esc(f.title)+'"></label>'+
+        '<label for="'+p+'lang">Language<select id="'+p+'lang" data-k="lang"><option value="python"'+(f.lang==="python"?" selected":"")+'>Python</option><option value="vex"'+(f.lang==="vex"?" selected":"")+'>VEX</option></select></label>'+
+        '<label for="'+p+'context">Where to paste<input id="'+p+'context" data-k="context" placeholder="Python Shell / Attribute Wrangle · Points" value="'+esc(f.context)+'"></label>'+
+        '<label for="'+p+'tested">Tested on<input id="'+p+'tested" data-k="tested" placeholder="Houdini 21.0.671" value="'+esc(f.tested)+'"></label>'+
+        '<label for="'+p+'filename">File name<input id="'+p+'filename" data-k="filename" placeholder="my_tool.py" value="'+esc(f.filename)+'"></label>'+
+      '</div>'+
+      '<label for="'+p+'description">What it does<textarea id="'+p+'description" data-k="description" rows="2">'+esc(f.description)+'</textarea></label>'+
+      '<label for="'+p+'notes">Notes / gotchas<textarea id="'+p+'notes" data-k="notes" rows="2">'+esc(f.notes)+'</textarea></label>'+
+      '<label for="'+p+'code">Code<textarea id="'+p+'code" data-k="code" class="code" spellcheck="false">'+esc(f.code)+'</textarea></label></div>';
+  }
+  function renderEditor(){
+    var d = state.draft, t = d.tech, v = d.ver;
+    var title = d.kind==="new" ? "New technique" : d.kind==="newver" ? "New version "+v.v+" of “"+t.name+"”" : "Edit “"+t.name+"” "+v.v;
+    var cats = Array.from(new Set(DB.techniques.map(function(x){return x.category;}).filter(Boolean))).sort();
+    $("main").innerHTML =
+      '<form class="editor" id="edForm" novalidate>'+
+        '<div class="dhead"><h2>'+esc(title)+'</h2></div>'+
+        '<div class="card"><h3>Technique</h3><div class="row">'+
+          '<label for="t-name">Name<input id="t-name" required value="'+esc(t.name)+'"></label>'+
+          '<label for="t-cat">Category<input id="t-cat" list="t-cats" placeholder="Particles / Pyro / RBD…" value="'+esc(t.category)+'"><datalist id="t-cats">'+cats.map(function(c){return '<option value="'+esc(c)+'">';}).join("")+'</datalist></label>'+
+          '<label for="t-type">Type<select id="t-type">'+TYPES.map(function(x){return '<option'+(x===t.type?" selected":"")+'>'+x+'</option>';}).join("")+'</select></label>'+
+          '<label for="t-author">Author<input id="t-author" value="'+esc(t.author)+'"></label>'+
+        '</div></div>'+
+        '<div class="card"><h3>Version '+esc(v.v)+'</h3>'+
+          '<label for="v-notes">Notes (อะไรเปลี่ยนใน version นี้ · วิธีใช้)<textarea id="v-notes" rows="4">'+esc(v.notes)+'</textarea></label>'+
+          '<div class="drop" id="drop">'+
+            (v.previewImage ? '<img src="/_blob/'+esc(v.previewImage)+'" alt="Preview">' : '<span>Preview: '+(v.previewVisual||"auto diagram / none")+'</span>')+
+            (assetsApi ? '<label for="v-img" class="btn small" style="flex-direction:row">Choose image<input id="v-img" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label><span>หรือกด Ctrl+V เพื่อ paste ภาพหน้าจอ</span>' : '<span>(ต้องเป็นเจ้าของหน้านี้ถึงจะอัปโหลดภาพได้)</span>')+
+            (v.previewImage ? '<button class="btn small" type="button" id="rmImg">Remove image</button>' : '')+
+          '</div>'+
+        '</div>'+
+        '<div id="files">'+v.files.map(fileCard).join("")+'</div>'+
+        '<div><button class="btn" type="button" id="addFile">+ Add file</button></div>'+
+        '<div class="formbar"><span class="status" id="edStatus">Save เผยแพร่หน้านี้เป็นเวอร์ชันใหม่</span>'+
+          '<span class="actions"><button class="btn" type="button" id="cancelBtn">Cancel</button><button class="btn primary" type="submit" id="saveBtn">Save</button></span></div>'+
+      '</form>';
+    $("files").querySelectorAll("textarea.code").forEach(function(ta){
+      ta.addEventListener("keydown", function(e){ if (e.key==="Tab" && !e.shiftKey){ e.preventDefault(); var a=ta.selectionStart,b=ta.selectionEnd; ta.value=ta.value.slice(0,a)+"    "+ta.value.slice(b); ta.selectionStart=ta.selectionEnd=a+4; } });
+    });
+    var imgInput = $("v-img");
+    if (imgInput) imgInput.addEventListener("change", function(){ if (imgInput.files[0]) uploadPreview(imgInput.files[0]); });
+    $("edForm").addEventListener("submit", function(e){ e.preventDefault(); commitDraft(); });
+  }
+  function readForm(){
+    var d = state.draft;
+    d.tech.name = $("t-name").value.trim(); d.tech.category = $("t-cat").value.trim();
+    d.tech.type = $("t-type").value; d.tech.author = $("t-author").value.trim();
+    d.ver.notes = $("v-notes").value.trim();
+    $("files").querySelectorAll(".card").forEach(function(card){
+      var f = d.ver.files[+card.dataset.idx];
+      card.querySelectorAll("[data-k]").forEach(function(el){ f[el.dataset.k] = el.value; });
+    });
+  }
+  function uploadPreview(file){
+    if (!assetsApi) return;
+    readForm();
+    var st = $("edStatus"); st.className="status"; st.textContent="Uploading image…";
+    assetsApi.upload(file).then(function(r){
+      state.draft.ver.previewImage = r.id; renderEditor(); $("edStatus").textContent="Image attached — press Save to keep it.";
+    }, function(err){
+      var c = err && err.code;
+      st.className="status err";
+      st.textContent = c==="too_large" ? "Image is over 20 MB — use a smaller screenshot." : c==="unsupported_type" ? "Use a PNG, JPEG, WebP or GIF image." : "Upload failed ("+(c||"error")+").";
+    });
+  }
+  function commitDraft(){
+    readForm();
+    var d = state.draft, st = $("edStatus");
+    if (!d.tech.name){ st.className="status err"; st.textContent="Give the technique a name."; $("t-name").focus(); return; }
+    d.ver.files = d.ver.files.map(function(f){ f.code = String(f.code||"").replace(/\s+$/,"") + "\n"; return f; });
+    var next = clone(DB);
+    var existing = next.techniques.find(function(x){return x.id===d.tech.id;});
+    if (!existing){ d.tech.versions = [d.ver]; next.techniques.push(d.tech); }
+    else {
+      existing.name=d.tech.name; existing.category=d.tech.category; existing.type=d.tech.type; existing.author=d.tech.author;
+      var i = existing.versions.findIndex(function(x){return x.v===d.ver.v;});
+      if (i>=0) existing.versions[i]=d.ver; else existing.versions.push(d.ver);
+    }
+    save(next, d.tech.id, st, $("saveBtn"));
+  }
+
+  // ---------------- save (republish the whole page from data) ----------------
+  function buildDoc(next){
+    var json = JSON.stringify(next).replace(/</g,"\\u003c");
+    var start = PRISTINE.indexOf('<script id="lib-data" type="application/json">');
+    var open = PRISTINE.indexOf(">", start) + 1;
+    var close = PRISTINE.indexOf("<\/script>", open);
+    return PRISTINE.slice(0, open) + json + PRISTINE.slice(close);
+  }
+  function save(next, tid, statusEl, btn){
+    if (!artifactApi) return;
+    if (btn) btn.disabled = true;
+    if (statusEl){ statusEl.className="status"; statusEl.textContent="Saving…"; }
+    try { history.replaceState(null,"", tid ? "#"+tid : location.pathname); } catch(e){}
+    artifactApi.publish(buildDoc(next)).then(function(){
+      if (statusEl) statusEl.textContent = "Saved.";
+    }, function(err){
+      if (btn) btn.disabled = false;
+      var code = err && err.code;
+      var msg = code==="conflict" ? "A newer version was saved elsewhere — the page is reloading to it; redo this edit."
+        : (code==="not_writer"||code==="not_granted") ? "You can view this shelf but not edit it."
+        : "Could not save ("+(code||"error")+"). Try again.";
+      if (statusEl){ statusEl.className="status err"; statusEl.textContent=msg; }
+    });
+  }
+
+  function render(){
+    renderTree();
+    if (state.mode==="edit" && state.draft) renderEditor(); else renderView();
+  }
+
+  // ---------------- events ----------------
+  document.addEventListener("click", function(e){
+    var b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.pick){ state.tid=b.dataset.pick; state.mode="view"; state.confirm=false; state.fid=null; try{history.replaceState(null,"","#"+state.tid);}catch(x){} render(); window.scrollTo({top:0}); return; }
+    if (b.dataset.file){ state.fid=b.dataset.file; renderView(); return; }
+    if (b.dataset.rmfile!=null){ readForm(); state.draft.ver.files.splice(+b.dataset.rmfile,1); renderEditor(); return; }
+    switch (b.id){
+      case "copyBtn":
+        var t=tech(state.tid), f=verOf(t).files.find(function(x){return x.id===state.fid;});
+        var ok=function(){ b.textContent="Copied"; b.classList.add("done"); setTimeout(function(){ b.textContent="Copy code"; b.classList.remove("done"); },1600); };
+        var fallback=function(){ var r=document.createRange(); r.selectNodeContents($("codeEl")); var s=getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent="Selected — press Ctrl+C"; };
+        try { navigator.clipboard.writeText(f.code).then(ok, fallback); } catch(x){ fallback(); }
+        break;
+      case "newTech": openEditor("new"); break;
+      case "editBtn": openEditor("edit"); break;
+      case "newVerBtn": openEditor("newver"); break;
+      case "addFile": readForm(); state.draft.ver.files.push(blankFile()); renderEditor(); break;
+      case "rmImg": readForm(); state.draft.ver.previewImage=""; renderEditor(); break;
+      case "cancelBtn": state.mode="view"; state.draft=null; render(); break;
+      case "delBtn": state.confirm=true; renderView(); break;
+      case "delNo": state.confirm=false; renderView(); break;
+      case "delYes":
+        var tt=tech(state.tid), vv=verOf(tt), next=clone(DB), nt=next.techniques.find(function(x){return x.id===tt.id;});
+        if (nt.versions.length>1) nt.versions = nt.versions.filter(function(x){return x.v!==vv.v;});
+        else next.techniques = next.techniques.filter(function(x){return x.id!==tt.id;});
+        b.disabled=true; b.textContent="Deleting…";
+        save(next, next.techniques.some(function(x){return x.id===tt.id;}) ? tt.id : "", null, b);
+        break;
+    }
+  });
+  document.addEventListener("change", function(e){
+    var s = e.target;
+    if (s.dataset && s.dataset.ver){ state.ver[s.dataset.ver]=s.value; state.tid=s.dataset.ver; state.mode="view"; state.confirm=false; state.fid=null; render(); }
+  });
+  document.addEventListener("paste", function(e){
+    if (state.mode!=="edit" || !assetsApi) return;
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i=0;i<items.length;i++){ if (items[i].type.indexOf("image/")===0){ var file=items[i].getAsFile(); if (file){ e.preventDefault(); uploadPreview(file); return; } } }
+  });
+  $("q").addEventListener("input", function(e){ state.q=e.target.value; renderTree(); });
+
+  render();
+
+  if (window.claude && window.claude.use){
+    window.claude.use("artifact").then(function(api){
+      if (!api) return;
+      artifactApi = api; $("newTech").hidden = false;
+      if (state.mode==="view") renderView();
+    }, function(){});
+    window.claude.use("assets").then(function(api){ assetsApi = api || null; if (state.mode==="edit" && $("edForm")) { readForm(); renderEditor(); } }, function(){});
+  }
+})();
+</script>

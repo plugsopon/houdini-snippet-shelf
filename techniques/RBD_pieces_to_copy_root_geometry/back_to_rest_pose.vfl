@@ -1,0 +1,13 @@
+// Alternative: put the FINAL-frame packed pieces back into their REST pose, then
+// Copy to Points re-applies the sim per frame:  world = (rest - pivot) * orient + P
+// input 0 = packed pieces fetched at the rest frame (Timeshift of a Fetch-Packed DOP Import)
+// input 1 = RBD points (DOP Import, Create Points) timeshifted to the SAME frame
+int pt = findattribval(1, "point", "name", s@name);
+if (pt < 0) { removepoint(0, @ptnum); return; }
+vector4 qi = qinvert(point(1, "orient", pt));
+vector  P1 = point(1, "P", pt);
+vector  pv = point(1, "pivot", pt);
+int prim = pointprims(0, @ptnum)[0];
+matrix3 T = primintrinsic(0, "transform", prim);
+setprimintrinsic(0, "transform", prim, T * qconvert(qi));   // remove the sim's rotation
+v@P = qrotate(qi, v@P - P1) + pv;                           // move back to where it was emitted

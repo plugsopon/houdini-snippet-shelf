@@ -1,0 +1,10 @@
+float frame = @Frame;
+float whole_frame = rint(@Frame);      
+
+float back = ceil(frame)-frame;
+f@back =back;
+float forward = frame-floor(frame);
+f@forward = forward;
+
+if(frame<whole_frame) v@P-=v@v*@TimeInc*back;
+if(frame>=whole_frame) v@P+=v@v2*@TimeInc*forward;

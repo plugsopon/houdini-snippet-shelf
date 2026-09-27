@@ -1,0 +1,8 @@
+# Houdini autosaves / backups, if a .hip ever lands here
+*.hip.bak
+*_bak*.hip*
+backup/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

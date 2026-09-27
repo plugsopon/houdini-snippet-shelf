@@ -1,0 +1,12 @@
+// Points-only method: DOP Import set to "Create Points to Represent Objects",
+// Transfer Attributes = orient pivot restxform name v
+// One point per piece -> rebuild that piece's WHOLE transform from the sim point:
+//   restxform = emission rotation + pscale (3x3) and the rest position (row 3)
+//   world     = (rest - pivot) * orient + P
+matrix  X  = 4@restxform;
+matrix3 A  = matrix3(X);
+vector  rp = set(getcomp(X, 3, 0), getcomp(X, 3, 1), getcomp(X, 3, 2));
+matrix3 R  = qconvert(p@orient);
+3@transform = A * R;
+v@P = (rp - v@pivot) * R + v@P;
+s@name = re_replace("_[0-9]+$", "", s@name);   // piece0_12 -> piece0 (drop if names already match)

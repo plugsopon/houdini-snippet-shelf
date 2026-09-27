@@ -1,0 +1,7 @@
+// One target point per simulated piece, carrying that piece's WHOLE transform:
+// emission rotation + pscale + the sim's motion.
+int prim = pointprims(0, @ptnum)[0];
+matrix M = primintrinsic(0, "packedfulltransform", prim);
+3@transform = matrix3(M);
+v@P = set(getcomp(M, 3, 0), getcomp(M, 3, 1), getcomp(M, 3, 2));
+s@name = re_replace("_[0-9]+$", "", s@name);   // piece0_12 -> piece0 (drop if names already match)

@@ -1,0 +1,3 @@
+int pt;
+float sd = surfacedist(0,'edge','P',@ptnum,pt,'edge');
+@sd = sd;
