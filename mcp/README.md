@@ -157,6 +157,4 @@ process closed; it resumes (`--resume`) on the next message. Earlier, switching 
 running session and crashed with `Internal C++ object (ClaudeSession) already deleted` — the
 process-finished handler is now a bound method, disconnected in `stop()`.
 
-The header shows `subscription  N tok` when the CLI reports `apiKeySource: none` (signed in
-with the Claude plan — not billed per call). `total_cost_usd` is still in the tooltip, as the
-API-price equivalent. With a real API key it shows dollars.
+The header shows only the session's token count - no dollar figure (Plug's call, 2026-09-28).

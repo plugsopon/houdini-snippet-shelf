@@ -869,13 +869,9 @@ class ChatPanel(QtWidgets.QWidget):
         self.head_title.setText(c.title)
         self.stop_btn.setVisible(c.busy)
         self.send_btn.setText("Queue" if c.busy else "Send")
-        if c.api_source == "none":
-            self.cost.setText("subscription  %s tok" % _k(c.tokens))
-            self.cost.setToolTip("Signed in with your Claude plan - nothing here is billed per call. It counts "
-                                 "toward the plan's usage limit.\nAPI-price equivalent of this session: $%.2f" % c.total_cost)
-        elif c.api_source:
-            self.cost.setText("$%.2f" % c.total_cost)
-            self.cost.setToolTip("Billed to the API key (%s)" % c.api_source)
+        # token count only - no dollar figure (the plan is not billed per call)
+        self.cost.setText("%s tok" % _k(c.tokens) if c.tokens else "")
+        self.cost.setToolTip("Tokens used in this session" + (" - on your Claude plan" if c.api_source == "none" else ""))
         if c.session is not None and c.session.model:
             self.status.setText("%s  %s" % (c.session.model or "default", self.mode_box.currentData()))
 
