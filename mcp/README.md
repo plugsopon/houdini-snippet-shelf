@@ -147,3 +147,16 @@ Settings, Connect, Disconnect, Hide Cursor, Preview Edges. Icons are the SVGs in
 copy the icons into `$HOUDINI_USER_PREF_DIR/config/Icons`. Install by copying the `.shelf` into
 `$HOUDINI_USER_PREF_DIR/toolbar/`, then add the tab via the dock's "+" menu. The main-menu
 label is now "FX AI" (needs a Houdini restart to show).
+
+## Chat: several sessions at once
+
+Each conversation (`Convo` in `brother_chat.py`) has its own `claude` process and its own feed.
+Switching in History never stops a running one. A working session shows a spinner in the list,
+and one waiting on a permission question shows `?` in amber. An idle session you leave has its
+process closed; it resumes (`--resume`) on the next message. Earlier, switching deleted the
+running session and crashed with `Internal C++ object (ClaudeSession) already deleted` — the
+process-finished handler is now a bound method, disconnected in `stop()`.
+
+The header shows `subscription  N tok` when the CLI reports `apiKeySource: none` (signed in
+with the Claude plan — not billed per call). `total_cost_usd` is still in the tooltip, as the
+API-price equivalent. With a real API key it shows dollars.
