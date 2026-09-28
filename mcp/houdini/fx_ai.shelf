@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+  <!-- This file contains definitions of shelves, toolbars, and tools.
+ It should not be hand-edited when it is being used by the application.
+ Note, that two definitions of the same element are not allowed in
+ a single file. -->
+
+  <toolshelf name="fx_ai" label="FX AI">
+    <memberTool name="fxai_chat"/>
+    <memberTool name="fxai_settings"/>
+    <memberTool name="fxai_connect"/>
+    <memberTool name="fxai_disconnect"/>
+    <memberTool name="fxai_hide_cursor"/>
+    <memberTool name="fxai_preview_edges"/>
+  </toolshelf>
+
+  <tool name="fxai_chat" label="Chat" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_chat.svg">
+    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_chat
+brother_chat.show_chat()
+]]></script>
+  </tool>
+
+  <tool name="fxai_settings" label="Settings" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_settings.svg">
+    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_ui
+brother_ui.show_settings()
+]]></script>
+  </tool>
+
+  <tool name="fxai_connect" label="Connect" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_connect.svg">
+    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_link
+brother_link.start()
+]]></script>
+  </tool>
+
+  <tool name="fxai_disconnect" label="Disconnect" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_disconnect.svg">
+    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+if "brother_link" in sys.modules:
+    sys.modules["brother_link"].stop()
+]]></script>
+  </tool>
+
+  <tool name="fxai_hide_cursor" label="Hide Cursor" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_hide_cursor.svg">
+    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+if "brother_cursor" in sys.modules:
+    sys.modules["brother_cursor"].remove()
+]]></script>
+  </tool>
+
+  <tool name="fxai_preview_edges" label="Preview Edges" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_edges.svg">
+    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
+    <script scriptType="python"><![CDATA[import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_cursor
+brother_cursor.control(True)
+import hdefereval, threading
+threading.Timer(2.5, lambda: hdefereval.executeInMainThreadWithResult(brother_cursor.control, False)).start()
+]]></script>
+  </tool>
+</shelfDocument>

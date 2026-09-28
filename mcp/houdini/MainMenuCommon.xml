@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Brother's "AI" menu on Houdini's main menu bar (after Help).
+<!-- Brother's "FX AI" menu on Houdini's main menu bar (after Help).
      install_menu.py copies this file into $HOUDINI_USER_PREF_DIR; Houdini merges it with its
      own MainMenuCommon.xml. -->
 <mainMenu>
   <menuBar>
     <subMenu id="brother_ai_menu">
-      <label>AI</label>
+      <label>FX AI</label>
       <insertAfter>help_menu</insertAfter>
 
       <scriptItem id="brother_ai_chat">
@@ -21,7 +21,7 @@ brother_chat.show_chat()
       </scriptItem>
 
       <scriptItem id="brother_ai_settings">
-        <label>AI Settings...</label>
+        <label>FX AI Settings...</label>
         <scriptCode><![CDATA[
 import sys
 p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"

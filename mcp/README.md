@@ -138,3 +138,12 @@ Traps:
   other server connects. `claude_env()` drops PYTHONHOME/PYTHONPATH and Houdini's PATH dirs.
 - Strip `CLAUDECODE` / `CLAUDE_*` (except the token) or the child thinks it is a nested SDK child
   and answers "Not logged in" (Desktop learned this 2026-06-20).
+
+## FX AI shelf tab
+
+`mcp/houdini/fx_ai.shelf` is the "FX AI" tab in the left shelf dock (`shelf_set_1`): Chat,
+Settings, Connect, Disconnect, Hide Cursor, Preview Edges. Icons are the SVGs in
+`mcp/houdini/icons/`, referenced by absolute repo path — on another machine, fix the paths or
+copy the icons into `$HOUDINI_USER_PREF_DIR/config/Icons`. Install by copying the `.shelf` into
+`$HOUDINI_USER_PREF_DIR/toolbar/`, then add the tab via the dock's "+" menu. The main-menu
+label is now "FX AI" (needs a Houdini restart to show).
