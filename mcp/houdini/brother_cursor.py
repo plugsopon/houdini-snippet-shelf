@@ -42,7 +42,7 @@ DEFAULTS = {"style": "glitch_dark", "glitch": "calm", "show_label": True, "label
             "scale": 2, "ripples": True,
             # the screen edges fade to this colour while Brother is driving Houdini
             "vignette": True, "vignette_color": "#000000", "vignette_strength": 0.8,
-            "vignette_width": 90, "vignette_style": "glitch"}
+            "vignette_width": 90, "vignette_style": "mosh"}
 SETTINGS_FILE = os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"),
                              ".houdini_brother", "cursor.json")
 
@@ -144,6 +144,148 @@ def paint_edges(p, rect, s=None, level=1.0, slices=(), split=1):
                 r = QtCore.QRectF(x0 + pos, y1 - depth, thick, depth)
             p.fillRect(r.translated(k if side in "LR" else 0, 0 if side in "LR" else k), col(ghost, 0.45))
             p.fillRect(r, c)
+    p.restore()
+
+
+# ----------------------------------------------------------------------------- mosh edges
+# A datamosh / pixel-stretch frame, after the smeared-light glitch look: light is STRETCHED in
+# from each edge as streaks of uneven length (vertical top & bottom, horizontal left & right),
+# bright at the screen edge and dying into the dark toward the middle. Mostly navy and electric
+# blue, the odd red/orange/white; a colour-shifted copy is ADDED on top a few px off (RGB drift),
+# slices tear sideways, and it slides and re-rolls while Brother is in control.
+# The band images are built once per re-roll and cached; a frame only slides and tears them.
+_MOSH_COLOURS = (                                    # (rgb, weight)
+    ((4, 6, 22), 9), ((10, 22, 90), 8), ((22, 70, 210), 7), ((40, 130, 255), 6),
+    ((0, 205, 255), 4), ((160, 230, 255), 2), ((255, 248, 235), 1.2), ((255, 50, 105), 2),
+    ((215, 25, 55), 1.5), ((255, 125, 30), 1.4), ((255, 205, 110), 0.8), ((120, 40, 210), 1.5))
+
+
+def _mosh_colour(rnd):
+    tot = sum(w for _, w in _MOSH_COLOURS)
+    r = rnd.uniform(0, tot)
+    for c, w in _MOSH_COLOURS:
+        r -= w
+        if r <= 0:
+            return c
+    return _MOSH_COLOURS[0][0]
+
+
+def _mosh_band(side, bw, bh, rnd):
+    """One edge's streaks, alpha already fading toward the middle."""
+    img = QtGui.QImage(bw, bh, QtGui.QImage.Format_ARGB32_Premultiplied)
+    img.fill(QtCore.Qt.transparent)
+    q = QtGui.QPainter(img)
+    q.setPen(QtCore.Qt.NoPen)
+    horiz = side in "TB"
+    span, depth = (bw, bh) if horiz else (bh, bw)
+    x = 0
+    while x < span:
+        run = rnd.choice((1, 1, 2, 2, 3, 4, 6, 9, 14))
+        rgb = _mosh_colour(rnd)
+        v = rnd.uniform(0.6, 1.25)
+        c = QtGui.QColor(min(255, int(rgb[0] * v)), min(255, int(rgb[1] * v)), min(255, int(rgb[2] * v)))
+        L = depth * (rnd.uniform(0.12, 1.0) ** 0.8)            # uneven streak length
+        # gradient along the streak: bright at the edge -> full colour -> gone
+        if side == "T":
+            g = QtGui.QLinearGradient(0, 0, 0, L)
+        elif side == "B":
+            g = QtGui.QLinearGradient(0, bh, 0, bh - L)
+        elif side == "L":
+            g = QtGui.QLinearGradient(0, 0, L, 0)
+        else:
+            g = QtGui.QLinearGradient(bw, 0, bw - L, 0)
+        hot = QtGui.QColor(min(255, c.red() + 60), min(255, c.green() + 60), min(255, c.blue() + 60))
+        g.setColorAt(0.0, hot)
+        g.setColorAt(0.25, c)
+        mid = QtGui.QColor(c); mid.setAlpha(150)
+        g.setColorAt(0.7, mid)
+        end = QtGui.QColor(c); end.setAlpha(0)
+        g.setColorAt(1.0, end)
+        if horiz:
+            r = QtCore.QRectF(x, 0 if side == "T" else bh - L, run, L)
+        else:
+            r = QtCore.QRectF(0 if side == "L" else bw - L, x, L, run)
+        q.fillRect(r, QtGui.QBrush(g))
+        if run >= 3 and rnd.random() < 0.18:                    # a hot core down the middle of the streak
+            core = QtGui.QColor(255, 255, 255, rnd.randint(90, 200))
+            if horiz:
+                q.fillRect(QtCore.QRectF(x + run // 2, r.y(), 1, r.height() * 0.7), core)
+            else:
+                q.fillRect(QtCore.QRectF(r.x(), x + run // 2, r.width() * 0.7, 1), core)
+        x += run
+    q.end()
+    return img
+
+
+def make_mosh(rect, amount=1.0, seed=None):
+    """A fresh mosh state: the tears + RGB drift. Bands are built lazily in paint_mosh."""
+    import random
+    rnd = random.Random(seed)
+    W, H = int(rect.width()), int(rect.height())
+    st = {"seed": rnd.random(), "bands": {}, "tears": [], "split": rnd.choice((2, 3, 5, 8)),
+          "drift": 0.0}
+    for _ in range(rnd.randint(2, int(3 + 5 * amount))):
+        side = rnd.choice("TBLR")
+        span = W if side in "TB" else H
+        st["tears"].append((side, rnd.uniform(0, 0.9), rnd.uniform(0.04, 0.3),
+                            rnd.uniform(-0.15, 0.15) * span))
+    return st
+
+
+def paint_mosh(p, rect, s, level, st):
+    import random
+    base = QtGui.QColor(s["vignette_color"])
+    if not base.isValid():
+        base = QtGui.QColor(0, 0, 0)
+    depth = int(float(s["vignette_width"]) * 1.6)
+    a = max(0.0, min(1.0, float(s["vignette_strength"]) * level))
+    x0, y0 = rect.left(), rect.top()
+    W, H = int(rect.width()), int(rect.height())
+    k = st["split"]
+    p.save()
+    p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, False)
+    # the chosen colour first: a plain fade, so the streaks sit on darkness, not on the UI
+    paint_edges(p, rect, dict(s, vignette_style="fade"), level)
+    rnd = random.Random(st["seed"])
+    for side in "TBLR":
+        horiz = side in "TB"
+        bw, bh = (W, depth) if horiz else (depth, H)
+        key = (side, bw, bh)
+        if key not in st["bands"]:
+            st["bands"][key] = _mosh_band(side, bw, bh, rnd)
+        band = st["bands"][key]
+        span = bw if horiz else bh
+        at = QtCore.QPointF(*{"T": (x0, y0), "B": (x0, y0 + H - bh), "L": (x0, y0),
+                               "R": (x0 + W - bw, y0)}[side])
+        slide = (st["drift"] * (1 if side in "TL" else -1)) % span
+
+        def blit(offset, opacity, mode=QtGui.QPainter.CompositionMode_SourceOver, clip=None):
+            p.save()
+            p.setOpacity(opacity * a)
+            p.setCompositionMode(mode)
+            full = QtCore.QRectF(at.x(), at.y(), bw, bh)
+            p.setClipRect(clip if clip is not None else full)
+            for rep in (-1, 0, 1):                       # wrap-around while sliding
+                o = rep * span + offset + slide
+                p.drawImage(at + (QtCore.QPointF(o, 0) if horiz else QtCore.QPointF(0, o)), band)
+            p.restore()
+
+        blit(0, 1.0)
+        blit(k * 2, 0.55, QtGui.QPainter.CompositionMode_Plus)          # RGB drift: an added, shifted copy
+        for tside, where, thick, jump in st["tears"]:                   # slices torn sideways
+            if tside != side:
+                continue
+            if horiz:
+                clip = QtCore.QRectF(at.x(), at.y() + where * bh, bw, max(2.0, thick * bh))
+            else:
+                clip = QtCore.QRectF(at.x() + where * bw, at.y(), max(2.0, thick * bw), bh)
+            blit(jump, 1.0, clip=clip)
+    red = QtGui.QColor(RED); red.setAlphaF(0.75 * level)                # RGB-split rims
+    cyan = QtGui.QColor(CYAN); cyan.setAlphaF(0.75 * level)
+    p.fillRect(QtCore.QRectF(x0 + k, y0 + k, W - 2 * k, 2), red)
+    p.fillRect(QtCore.QRectF(x0 + k, y0 + k, 2, H - 2 * k), red)
+    p.fillRect(QtCore.QRectF(x0 + 2 * k, y0 + H - k - 2, W - 3 * k, 2), cyan)
+    p.fillRect(QtCore.QRectF(x0 + W - k - 2, y0 + 2 * k, 2, H - 3 * k), cyan)
     p.restore()
 
 
@@ -267,6 +409,7 @@ class _Overlay(QtWidgets.QWidget):
         self.last_control = 0.0
         self.ctrl_level = 0.0            # 0..1, eased - the edge fade's opacity
         self.edge_slices, self.edge_split = [], 1
+        self.mosh = None
         self._follow()
         main.installEventFilter(self)
         self._timer = QtCore.QTimer(self)
@@ -302,6 +445,15 @@ class _Overlay(QtWidgets.QWidget):
         self.ctrl_level += (target - self.ctrl_level) * (0.25 if target > self.ctrl_level else 0.12)
         if self.ctrl_level < 0.005:
             self.ctrl_level = 0.0
+        if self.ctrl_level > 0 and SETTINGS.get("vignette_style") == "mosh":
+            amount = {"off": 0.3, "calm": 0.7, "wild": 1.3}[SETTINGS["glitch"]]
+            if self.mosh is None or random.random() < 0.012 * (0.5 + amount):  # new streaks every few s (~56 ms to build)
+                self.mosh = make_mosh(QtCore.QRectF(self.rect()), amount)
+            else:
+                self.mosh["drift"] += 1.5 + 3 * amount                       # the streaks slide
+                if random.random() < 0.3 * amount:                           # ...and tear anew
+                    fresh = make_mosh(QtCore.QRectF(self.rect()), amount)
+                    self.mosh["tears"], self.mosh["split"] = fresh["tears"], fresh["split"]
         if self.ctrl_level > 0 and SETTINGS.get("vignette_style") == "glitch":
             if random.random() < 0.35:                   # the edge tears re-roll a few times a second
                 self.edge_slices = make_edge_glitch(QtCore.QRectF(self.rect()),
@@ -309,6 +461,7 @@ class _Overlay(QtWidgets.QWidget):
                 self.edge_split = random.choice((1, 1, 2, 3))
             elif random.random() < 0.25:
                 self.edge_slices, self.edge_split = [], 1
+        self.mosh = None
         if now - self.last_active > 20 and not self.ripples and self.ctrl_level == 0.0:
             self.hide()                                                    # idle: fade out of the way
         self.update()
@@ -321,8 +474,13 @@ class _Overlay(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         now = time.time()
         if SETTINGS["vignette"] and self.ctrl_level > 0:
-            paint_edges(p, QtCore.QRectF(self.rect()), SETTINGS, self.ctrl_level,
-                        self.edge_slices, self.edge_split)
+            if SETTINGS.get("vignette_style") == "mosh":
+                if self.mosh is None:
+                    self.mosh = make_mosh(QtCore.QRectF(self.rect()))
+                paint_mosh(p, QtCore.QRectF(self.rect()), SETTINGS, self.ctrl_level, self.mosh)
+            else:
+                paint_edges(p, QtCore.QRectF(self.rect()), SETTINGS, self.ctrl_level,
+                            self.edge_slices, self.edge_split)
         for pt, t0 in (self.ripples if SETTINGS["ripples"] else ()):        # click ripples
             k = (now - t0) / 0.6
             c = QtGui.QColor(WHITE); c.setAlphaF(max(0.0, 0.8 * (1 - k)))
