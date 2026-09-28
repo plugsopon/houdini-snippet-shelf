@@ -16,7 +16,7 @@ import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
 WHITE = QtGui.QColor(255, 255, 255)
-INK = QtGui.QColor(30, 30, 34)          # thin dark edge so the white arrow still reads on light UI
+BLACK = QtGui.QColor(0, 0, 0)          # arrow + tag: black fill and stroke; the white glow keeps it readable on dark UI
 _ov = {"w": None, "last": None}      # last = widget Brother last clicked
 
 
@@ -88,7 +88,7 @@ class _Overlay(QtWidgets.QWidget):
             g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
             p.setPen(QtGui.QPen(g, width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin))
             p.drawPolygon(arrow)
-        p.setPen(QtGui.QPen(INK, 1.2)); p.setBrush(WHITE)
+        p.setPen(QtGui.QPen(BLACK, 1.2)); p.setBrush(BLACK)
         p.drawPolygon(arrow)
         f = p.font(); f.setPointSize(8); f.setBold(True); p.setFont(f)      # name tag
         tag = QtCore.QRectF(x + 16, y + 24, 8 + 7 * len(self.label), 16)
@@ -96,8 +96,8 @@ class _Overlay(QtWidgets.QWidget):
             g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
             p.setPen(QtCore.Qt.NoPen); p.setBrush(g)
             p.drawRoundedRect(tag.adjusted(-grow, -grow, grow, grow), 4 + grow, 4 + grow)
-        p.setPen(QtGui.QPen(INK, 1)); p.setBrush(WHITE); p.drawRoundedRect(tag, 4, 4)
-        p.setPen(INK); p.drawText(tag, QtCore.Qt.AlignCenter, self.label)
+        p.setPen(QtGui.QPen(BLACK, 1)); p.setBrush(BLACK); p.drawRoundedRect(tag, 4, 4)
+        p.setPen(WHITE); p.drawText(tag, QtCore.Qt.AlignCenter, self.label)
 
 
 def _main():
