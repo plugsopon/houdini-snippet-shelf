@@ -39,7 +39,10 @@ STYLES = {                     # name: (label, kind, fill, edge)
     "dot":          ("Presenter dot",              "dot",    PINK, WHITE),
 }
 DEFAULTS = {"style": "glitch_dark", "glitch": "calm", "show_label": True, "label": "Brother",
-            "scale": 2, "ripples": True}
+            "scale": 2, "ripples": True,
+            # the screen edges fade to this colour while Brother is driving Houdini
+            "vignette": True, "vignette_color": "#000000", "vignette_strength": 0.8,
+            "vignette_width": 90}
 SETTINGS_FILE = os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"),
                              ".houdini_brother", "cursor.json")
 
@@ -72,6 +75,48 @@ def save_settings(s):
 
 
 SETTINGS = load_settings()
+
+
+def paint_edges(p, rect, s=None, level=1.0):
+    """The 'Brother is driving' frame: each edge fades from the chosen colour to nothing."""
+    s = s or SETTINGS
+    base = QtGui.QColor(s["vignette_color"])
+    if not base.isValid():
+        base = QtGui.QColor(0, 0, 0)
+    w = float(s["vignette_width"])
+    a = max(0.0, min(1.0, float(s["vignette_strength"]) * level))
+    solid = QtGui.QColor(base); solid.setAlphaF(a)
+    clear = QtGui.QColor(base); clear.setAlphaF(0.0)
+    p.save()
+    p.setPen(QtCore.Qt.NoPen)
+    x0, y0, x1, y1 = rect.left(), rect.top(), rect.right(), rect.bottom()
+    for (ax, ay, bx, by), band in (((x0, 0, x0 + w, 0), QtCore.QRectF(x0, y0, w, rect.height())),
+                                   ((x1, 0, x1 - w, 0), QtCore.QRectF(x1 - w, y0, w, rect.height())),
+                                   ((0, y0, 0, y0 + w), QtCore.QRectF(x0, y0, rect.width(), w)),
+                                   ((0, y1, 0, y1 - w), QtCore.QRectF(x0, y1 - w, rect.width(), w))):
+        g = QtGui.QLinearGradient(ax, ay, bx, by)
+        g.setColorAt(0.0, solid)
+        g.setColorAt(0.45, QtGui.QColor(base.red(), base.green(), base.blue(), int(255 * a * 0.35)))
+        g.setColorAt(1.0, clear)
+        p.fillRect(band, QtGui.QBrush(g))
+    p.restore()
+
+
+def control(active):
+    """brother_link calls this around every request that CHANGES something (click, type,
+    create, set, a run that isn't read-only). The edges fade in at once - even a long cook that
+    blocks the event loop shows it - and fade out ~1s after the last request ends."""
+    if not SETTINGS["vignette"]:
+        return
+    ov = _overlay()
+    if active:
+        ov.ctrl_depth += 1
+        if ov.ctrl_level < 0.6:
+            ov.ctrl_level = 0.6
+            ov.repaint()
+    else:
+        ov.ctrl_depth = max(0, ov.ctrl_depth - 1)
+    ov.last_control = ov.last_active = time.time()
 
 
 def paint_cursor(p, x, y, s=None, glitch=None, split=1):
@@ -172,6 +217,10 @@ class _Overlay(QtWidgets.QWidget):
         self.last_active = time.time()
         self.last_move = 0.0
         self.glitch, self.split = {}, 1
+        self.has_cursor = False          # only draw the arrow once Brother has actually moved it
+        self.ctrl_depth = 0              # > 0 while a controlling request is running
+        self.last_control = 0.0
+        self.ctrl_level = 0.0            # 0..1, eased - the edge fade's opacity
         self._follow()
         main.installEventFilter(self)
         self._timer = QtCore.QTimer(self)
@@ -203,8 +252,12 @@ class _Overlay(QtWidgets.QWidget):
         elif random.random() < 0.5:
             self.glitch, self.split = {}, 1
         self.ripples = [r for r in self.ripples if now - r[1] < 0.6]
-        if now - self.last_active > 20 and not self.ripples:               # idle: fade out of the way
-            self.hide()
+        target = 1.0 if (self.ctrl_depth > 0 or now - self.last_control < 1.2) else 0.0
+        self.ctrl_level += (target - self.ctrl_level) * (0.25 if target > self.ctrl_level else 0.12)
+        if self.ctrl_level < 0.005:
+            self.ctrl_level = 0.0
+        if now - self.last_active > 20 and not self.ripples and self.ctrl_level == 0.0:
+            self.hide()                                                    # idle: fade out of the way
         self.update()
 
     def paintEvent(self, _):
@@ -214,13 +267,16 @@ class _Overlay(QtWidgets.QWidget):
         p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         now = time.time()
+        if SETTINGS["vignette"] and self.ctrl_level > 0:
+            paint_edges(p, QtCore.QRectF(self.rect()), SETTINGS, self.ctrl_level)
         for pt, t0 in (self.ripples if SETTINGS["ripples"] else ()):        # click ripples
             k = (now - t0) / 0.6
             c = QtGui.QColor(WHITE); c.setAlphaF(max(0.0, 0.8 * (1 - k)))
             p.setPen(QtGui.QPen(c, 3)); p.setBrush(QtCore.Qt.NoBrush)
             r = 6 + 26 * k
             p.drawEllipse(pt, r, r)
-        paint_cursor(p, self.pos_.x(), self.pos_.y(), SETTINGS, self.glitch, self.split)
+        if self.has_cursor:
+            paint_cursor(p, self.pos_.x(), self.pos_.y(), SETTINGS, self.glitch, self.split)
 
 
 def _main():
@@ -269,6 +325,7 @@ def _glide(to, seconds=None):
         e = k * k * (3 - 2 * k)                                             # ease in-out
         ov.pos_ = QtCore.QPointF(a.x() + (b.x() - a.x()) * e, a.y() + (b.y() - a.y()) * e)
         ov.last_active = ov.last_move = time.time()
+        ov.has_cursor = True
         ov.update()
         app.processEvents(QtCore.QEventLoop.AllEvents, 10)
         if k >= 1.0:

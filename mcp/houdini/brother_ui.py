@@ -105,6 +105,27 @@ class SettingsPanel(QtWidgets.QWidget):
             b.clicked.connect(lambda _=False, name=name: self.set("style", name))
             self.tiles.addButton(b); grid.addWidget(b, n // 4, n % 4)
             self.previews.append(pv)
+
+        left.addWidget(QtWidgets.QLabel("WHILE BROTHER IS IN CONTROL", objectName="section"))
+        self.vig = QtWidgets.QCheckBox("Fade the screen edges")
+        self.vig.setChecked(bool(self.s["vignette"]))
+        self.vig.toggled.connect(lambda v: self.set("vignette", v))
+        left.addWidget(self.vig)
+        sw = QtWidgets.QHBoxLayout(); sw.setSpacing(6); left.addLayout(sw)
+        self.swatches = QtWidgets.QButtonGroup(self)
+        for hexc in ("#000000", "#f32285", "#00ebff", "#ff7a1a", "#8b5cf6", "#ffffff"):
+            b = QtWidgets.QPushButton(checkable=True); b.setFixedSize(30, 26)
+            b.setStyleSheet("QPushButton{background:%s;border:1px solid #3a3a42;border-radius:6px;}"
+                            "QPushButton:checked{border:2px solid #00ebff;}" % hexc)
+            b.setChecked(hexc.lower() == str(self.s["vignette_color"]).lower())
+            b.clicked.connect(lambda _=False, c=hexc: self.set("vignette_color", c))
+            self.swatches.addButton(b); sw.addWidget(b)
+        custom = QtWidgets.QPushButton("Custom..."); custom.clicked.connect(self.pick_color)
+        sw.addWidget(custom); sw.addStretch(1)
+        left.addLayout(self._segmented("vignette_strength", (("Soft", 0.5), ("Medium", 0.8), ("Strong", 1.0))))
+        left.addLayout(self._segmented("vignette_width", (("Thin", 50), ("Medium", 90), ("Wide", 160))))
+        prev = QtWidgets.QPushButton("Preview the edges"); prev.clicked.connect(self.preview_edges)
+        left.addWidget(prev, 0, QtCore.Qt.AlignLeft)
         left.addStretch(1)
 
         right = QtWidgets.QVBoxLayout(); right.setSpacing(8); body.addLayout(right)
@@ -174,6 +195,19 @@ class SettingsPanel(QtWidgets.QWidget):
             b.clicked.connect(lambda _=False, v=value: self.set(key, v))
             group.addButton(b); row.addWidget(b)
         return row
+
+    def pick_color(self):
+        c = QtWidgets.QColorDialog.getColor(QtGui.QColor(self.s["vignette_color"]), self, "Edge colour")
+        if c.isValid():
+            self.swatches.setExclusive(False)
+            for b in self.swatches.buttons():
+                b.setChecked(False)
+            self.swatches.setExclusive(True)
+            self.set("vignette_color", c.name())
+
+    def preview_edges(self):
+        bc.control(True)
+        QtCore.QTimer.singleShot(1800, lambda: bc.control(False))
 
     def set(self, key, value):
         self.s[key] = value

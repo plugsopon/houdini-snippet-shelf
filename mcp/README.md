@@ -109,3 +109,10 @@ Nothing is running unless you start it.
   Changes apply to the live cursor at once and persist in `~/.houdini_brother/cursor.json`.
 - The panel is its own top-level window, so Brother's cursor cannot click inside it
   (`_target` only searches Houdini's main window).
+
+- **Edges fade while Brother drives** (2026-09-28): brother_link wraps every request that ACTS
+  (anything but the look-only ops, and `run` whose label says read-only) in
+  `brother_cursor.control()`. The overlay paints the four window edges fading from the chosen
+  colour, in at once, out ~1s after the last request. Colour/strength/width in AI Settings.
+  Hot-update note: never `reload(brother_link)` in a live session - it resets `_state`
+  (server + token) and drops the connection; graft new functions onto the module instead.

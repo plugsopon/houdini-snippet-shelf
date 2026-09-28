@@ -387,6 +387,30 @@ if hou.isUIAvailable():                  # the virtual cursor only exists where 
     OPS.update(brother_cursor.OPS)
 
 
+# ----------------------------------------------------------------------------- "in control"
+# Requests that only LOOK never dim the screen; everything that acts does.
+_LOOK_OPS = {"ping", "scene", "network", "node", "problems", "geometry", "attrib", "compare",
+             "capture", "screenshot", "pane_screenshot", "cursor_hide"}
+
+
+def _is_control(name, args):
+    if name in _LOOK_OPS:
+        return False
+    if name == "run" and "read-only" in str(args.get("label", "")).lower():
+        return False
+    return True
+
+
+def _control(active):
+    bc = sys.modules.get("brother_cursor")
+    if bc is None or not hou.isUIAvailable():
+        return
+    try:
+        bc.control(active)
+    except Exception:                    # the frame is decoration - never fail a request over it
+        pass
+
+
 # ----------------------------------------------------------------------------- server
 def _handle(conn):
     with conn:
@@ -402,7 +426,17 @@ def _handle(conn):
                         resp = {"ok": False, "error": "unknown op %r" % req.get("op")}
                     else:
                         args = req.get("args") or {}
-                        resp = {"ok": True, "result": _on_main(lambda: _safe_json(op(args)))}
+                        ctl = _is_control(req.get("op"), args)
+
+                        def work(op=op, args=args, ctl=ctl):
+                            if ctl:
+                                _control(True)
+                            try:
+                                return _safe_json(op(args))
+                            finally:
+                                if ctl:
+                                    _control(False)
+                        resp = {"ok": True, "result": _on_main(work)}
             except (ValueError, KeyError, RuntimeError) as e:          # expected: bad path, no UI...
                 resp = {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
             except Exception as e:
