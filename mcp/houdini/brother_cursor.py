@@ -15,7 +15,8 @@ import math, os, time
 import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
-PINK = QtGui.QColor(243, 34, 133)
+WHITE = QtGui.QColor(255, 255, 255)
+INK = QtGui.QColor(30, 30, 34)          # thin dark edge so the white arrow still reads on light UI
 _ov = {"w": None, "last": None}      # last = widget Brother last clicked
 
 
@@ -75,20 +76,28 @@ class _Overlay(QtWidgets.QWidget):
         now = time.time()
         for pt, t0 in self.ripples:                                        # click ripples
             k = (now - t0) / 0.6
-            c = QtGui.QColor(PINK); c.setAlphaF(max(0.0, 0.7 * (1 - k)))
+            c = QtGui.QColor(WHITE); c.setAlphaF(max(0.0, 0.8 * (1 - k)))
             p.setPen(QtGui.QPen(c, 3)); p.setBrush(QtCore.Qt.NoBrush)
             r = 6 + 26 * k
             p.drawEllipse(pt, r, r)
         x, y = self.pos_.x(), self.pos_.y()                                 # the arrow
         arrow = QtGui.QPolygonF([QtCore.QPointF(x + dx, y + dy) for dx, dy in
                                  ((0, 0), (0, 22), (6, 17), (10, 26), (14, 24), (10, 15), (17, 15))])
-        p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), 1.6))
-        p.setBrush(PINK)
+        p.setBrush(QtCore.Qt.NoBrush)                                       # white glow: soft strokes, wide to narrow
+        for width, alpha in ((14, 0.06), (10, 0.10), (7, 0.16), (4.5, 0.26)):
+            g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
+            p.setPen(QtGui.QPen(g, width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin))
+            p.drawPolygon(arrow)
+        p.setPen(QtGui.QPen(INK, 1.2)); p.setBrush(WHITE)
         p.drawPolygon(arrow)
         f = p.font(); f.setPointSize(8); f.setBold(True); p.setFont(f)      # name tag
         tag = QtCore.QRectF(x + 16, y + 24, 8 + 7 * len(self.label), 16)
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(PINK); p.drawRoundedRect(tag, 4, 4)
-        p.setPen(QtGui.QColor(255, 255, 255)); p.drawText(tag, QtCore.Qt.AlignCenter, self.label)
+        for grow, alpha in ((5, 0.08), (3, 0.14), (1.5, 0.22)):
+            g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
+            p.setPen(QtCore.Qt.NoPen); p.setBrush(g)
+            p.drawRoundedRect(tag.adjusted(-grow, -grow, grow, grow), 4 + grow, 4 + grow)
+        p.setPen(QtGui.QPen(INK, 1)); p.setBrush(WHITE); p.drawRoundedRect(tag, 4, 4)
+        p.setPen(INK); p.drawText(tag, QtCore.Qt.AlignCenter, self.label)
 
 
 def _main():

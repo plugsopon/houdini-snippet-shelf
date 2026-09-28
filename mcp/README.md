@@ -88,3 +88,11 @@ Nothing is running unless you start it.
 - **Parameter pane fields: from a picture.** Houdini draws them itself on its one OpenGL surface; neither Qt nor `hou` can
   say where a field is. A Parm pane that shares a Network Editor's link group shows what is selected there, so after
   `click_node` Brother knows WHICH pane to crop (`pane_screenshot node=...`). A scrolled-away field still needs scrolling.
+
+- **Screenshots read the SCREEN, not Houdini.** `QWidget.grab()` of Houdini's OpenGL panes is black, so every
+  screenshot grabs the screen pixels where Houdini sits - if another window covers it (a browser, Claude),
+  the picture is THAT window. Clicks by path (`click_node`) and API sets still work; picture-based navigation
+  needs Houdini uncovered. Brother never raises Houdini itself: that would steal Plug's focus.
+- **Desktop `AI_Control`** (2026-09-28): Scene View | Network Editor | Parameters full height, the editor and the
+  Parameters pane in link Group1. Made with `desk add` + `Pane.splitHorizontally()`; saved only when Plug
+  uses Desktop > Save Current Desktop (there is no API for that).
