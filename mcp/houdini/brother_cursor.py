@@ -16,7 +16,17 @@ import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
 WHITE = QtGui.QColor(255, 255, 255)
-BLACK = QtGui.QColor(0, 0, 0)          # arrow + tag: black fill and stroke; the white glow keeps it readable on dark UI
+BLACK = QtGui.QColor(0, 0, 0)
+RED = QtGui.QColor(255, 30, 50)
+CYAN = QtGui.QColor(0, 235, 255)
+# The classic pixel arrow (B = black edge, W = white fill), drawn as a glitch: a red copy
+# shifted left and a cyan copy shifted right/down behind it (chromatic aberration), and a few
+# rows that jump sideways now and then.
+ARROW = ("B..........", "BB.........", "BWB........", "BWWB.......", "BWWWB......",
+         "BWWWWB.....", "BWWWWWB....", "BWWWWWWB...", "BWWWWWWWB..", "BWWWWWWWWB.",
+         "BWWWWWWWWWB", "BWWWWWWBBBB", "BWWWBWWB...", "BWWBBWWB...", "BWB..BWWB..",
+         "BB...BWWB..", "B.....BWWB.", "......BWWB.", ".......BB..")
+PX = 2                                   # screen pixels per arrow pixel
 _ov = {"w": None, "last": None}      # last = widget Brother last clicked
 
 
@@ -42,6 +52,8 @@ class _Overlay(QtWidgets.QWidget):
         self.ripples = []            # [(point, start_time)]
         self.label = "Brother"
         self.last_active = time.time()
+        self.last_move = 0.0
+        self.glitch, self.split = {}, 1
         self._follow()
         main.installEventFilter(self)
         self._timer = QtCore.QTimer(self)
@@ -62,6 +74,14 @@ class _Overlay(QtWidgets.QWidget):
 
     def _tick(self):
         now = time.time()
+        import random
+        moving = now - self.last_move < 0.15
+        if random.random() < (0.55 if moving else 0.12):         # a new glitch: 1-3 rows jump
+            self.glitch = {random.randrange(len(ARROW)): random.choice((-3, -2, 2, 3, 4))
+                           for _ in range(random.randint(1, 3))}
+            self.split = random.choice((1, 1, 2, 3)) if moving else random.choice((1, 1, 1, 2))
+        elif random.random() < 0.5:
+            self.glitch, self.split = {}, 1
         self.ripples = [r for r in self.ripples if now - r[1] < 0.6]
         if now - self.last_active > 20 and not self.ripples:               # idle: fade out of the way
             self.hide()
@@ -80,23 +100,30 @@ class _Overlay(QtWidgets.QWidget):
             p.setPen(QtGui.QPen(c, 3)); p.setBrush(QtCore.Qt.NoBrush)
             r = 6 + 26 * k
             p.drawEllipse(pt, r, r)
-        x, y = self.pos_.x(), self.pos_.y()                                 # the arrow
-        arrow = QtGui.QPolygonF([QtCore.QPointF(x + dx, y + dy) for dx, dy in
-                                 ((0, 0), (0, 22), (6, 17), (10, 26), (14, 24), (10, 15), (17, 15))])
-        p.setBrush(QtCore.Qt.NoBrush)                                       # white glow: soft strokes, wide to narrow
-        for width, alpha in ((14, 0.06), (10, 0.10), (7, 0.16), (4.5, 0.26)):
-            g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
-            p.setPen(QtGui.QPen(g, width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin))
-            p.drawPolygon(arrow)
-        p.setPen(QtGui.QPen(BLACK, 1.2)); p.setBrush(BLACK)
-        p.drawPolygon(arrow)
+        x, y = round(self.pos_.x()), round(self.pos_.y())                     # the arrow
+        p.setRenderHint(QtGui.QPainter.Antialiasing, False)                 # crisp pixels
+        p.setPen(QtCore.Qt.NoPen)
+
+        def arrow(dx, dy, fill_for):
+            for r, row in enumerate(ARROW):
+                gx = self.glitch.get(r, 0)
+                for c, ch in enumerate(row):
+                    col = fill_for(ch)
+                    if col is not None:
+                        p.fillRect(x + dx + (c + gx) * PX, y + dy + r * PX, PX, PX, col)
+
+        k = self.split
+        arrow(-PX * k, 0, lambda ch: RED if ch != "." else None)            # red ghost, left
+        arrow(PX * k, PX * k, lambda ch: CYAN if ch != "." else None)       # cyan ghost, right/down
+        arrow(0, 0, lambda ch: {"B": BLACK, "W": WHITE}.get(ch))
+        for r, gx in self.glitch.items():                                   # torn scanline dashes
+            if abs(gx) >= 3:
+                p.fillRect(x - 8 * PX, y + r * PX, 5 * PX, 1, WHITE)
         f = p.font(); f.setPointSize(8); f.setBold(True); p.setFont(f)      # name tag
-        tag = QtCore.QRectF(x + 16, y + 24, 8 + 7 * len(self.label), 16)
-        for grow, alpha in ((5, 0.08), (3, 0.14), (1.5, 0.22)):
-            g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
-            p.setPen(QtCore.Qt.NoPen); p.setBrush(g)
-            p.drawRoundedRect(tag.adjusted(-grow, -grow, grow, grow), 4 + grow, 4 + grow)
-        p.setPen(QtGui.QPen(BLACK, 1)); p.setBrush(BLACK); p.drawRoundedRect(tag, 4, 4)
+        tag = QtCore.QRectF(x + 12 * PX, y + 20 * PX, 8 + 7 * len(self.label), 16)
+        p.fillRect(tag, BLACK)
+        p.setPen(RED); p.drawText(tag.translated(-k, 0), QtCore.Qt.AlignCenter, self.label)
+        p.setPen(CYAN); p.drawText(tag.translated(k, 0), QtCore.Qt.AlignCenter, self.label)
         p.setPen(WHITE); p.drawText(tag, QtCore.Qt.AlignCenter, self.label)
 
 
@@ -145,7 +172,7 @@ def _glide(to, seconds=None):
         k = min(1.0, (time.time() - t0) / seconds) if seconds > 0 else 1.0
         e = k * k * (3 - 2 * k)                                             # ease in-out
         ov.pos_ = QtCore.QPointF(a.x() + (b.x() - a.x()) * e, a.y() + (b.y() - a.y()) * e)
-        ov.last_active = time.time()
+        ov.last_active = ov.last_move = time.time()
         ov.update()
         app.processEvents(QtCore.QEventLoop.AllEvents, 10)
         if k >= 1.0:
