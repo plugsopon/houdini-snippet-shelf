@@ -27,6 +27,7 @@ ARROW = ("B..........", "BB.........", "BWB........", "BWWB.......", "BWWWB.....
          "BWWWWWWWWWB", "BWWWWWWBBBB", "BWWWBWWB...", "BWWBBWWB...", "BWB..BWWB..",
          "BB...BWWB..", "B.....BWWB.", "......BWWB.", ".......BB..")
 PX = 2                                   # screen pixels per arrow pixel
+FILL, EDGE = BLACK, WHITE               # black arrow; the white edge keeps it readable on Houdini's dark UI
 _ov = {"w": None, "last": None}      # last = widget Brother last clicked
 
 
@@ -115,7 +116,7 @@ class _Overlay(QtWidgets.QWidget):
         k = self.split
         arrow(-PX * k, 0, lambda ch: RED if ch != "." else None)            # red ghost, left
         arrow(PX * k, PX * k, lambda ch: CYAN if ch != "." else None)       # cyan ghost, right/down
-        arrow(0, 0, lambda ch: {"B": BLACK, "W": WHITE}.get(ch))
+        arrow(0, 0, lambda ch: {"B": EDGE, "W": FILL}.get(ch))
         for r, gx in self.glitch.items():                                   # torn scanline dashes
             if abs(gx) >= 3:
                 p.fillRect(x - 8 * PX, y + r * PX, 5 * PX, 1, WHITE)
