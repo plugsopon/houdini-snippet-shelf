@@ -122,6 +122,7 @@ class SettingsPanel(QtWidgets.QWidget):
             self.swatches.addButton(b); sw.addWidget(b)
         custom = QtWidgets.QPushButton("Custom..."); custom.clicked.connect(self.pick_color)
         sw.addWidget(custom); sw.addStretch(1)
+        left.addLayout(self._segmented("vignette_style", (("Fade", "fade"), ("Glitch", "glitch"))))
         left.addLayout(self._segmented("vignette_strength", (("Soft", 0.5), ("Medium", 0.8), ("Strong", 1.0))))
         left.addLayout(self._segmented("vignette_width", (("Thin", 50), ("Medium", 90), ("Wide", 160))))
         prev = QtWidgets.QPushButton("Preview the edges"); prev.clicked.connect(self.preview_edges)

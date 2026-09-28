@@ -42,7 +42,7 @@ DEFAULTS = {"style": "glitch_dark", "glitch": "calm", "show_label": True, "label
             "scale": 2, "ripples": True,
             # the screen edges fade to this colour while Brother is driving Houdini
             "vignette": True, "vignette_color": "#000000", "vignette_strength": 0.8,
-            "vignette_width": 90}
+            "vignette_width": 90, "vignette_style": "glitch"}
 SETTINGS_FILE = os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"),
                              ".houdini_brother", "cursor.json")
 
@@ -77,8 +77,22 @@ def save_settings(s):
 SETTINGS = load_settings()
 
 
-def paint_edges(p, rect, s=None, level=1.0):
-    """The 'Brother is driving' frame: each edge fades from the chosen colour to nothing."""
+def make_edge_glitch(rect, amount=1.0):
+    """A fresh set of torn slices for the glitch edge: (side, pos, thick, depth, colour-key)."""
+    import random
+    out = []
+    for _ in range(random.randint(2, int(4 + 6 * amount))):
+        side = random.choice("LRTB")
+        span = rect.height() if side in "LR" else rect.width()
+        out.append((side, random.uniform(0.0, span), random.choice((2, 2, 3, 5, 8, 14)),
+                    random.uniform(18, 70 + 110 * amount), random.choice("rrccw")))
+    return out
+
+
+def paint_edges(p, rect, s=None, level=1.0, slices=(), split=1):
+    """The 'Brother is driving' frame. Fade: each edge fades from the chosen colour to nothing.
+    Glitch: the same fade plus a red and a cyan rim offset from each other (RGB split, like the
+    glitch cursor) and torn slices that jump in from the edges."""
     s = s or SETTINGS
     base = QtGui.QColor(s["vignette_color"])
     if not base.isValid():
@@ -87,18 +101,49 @@ def paint_edges(p, rect, s=None, level=1.0):
     a = max(0.0, min(1.0, float(s["vignette_strength"]) * level))
     solid = QtGui.QColor(base); solid.setAlphaF(a)
     clear = QtGui.QColor(base); clear.setAlphaF(0.0)
+    mid = QtGui.QColor(base); mid.setAlphaF(a * 0.35)
     p.save()
+    p.setRenderHint(QtGui.QPainter.Antialiasing, False)
     p.setPen(QtCore.Qt.NoPen)
-    x0, y0, x1, y1 = rect.left(), rect.top(), rect.right(), rect.bottom()
-    for (ax, ay, bx, by), band in (((x0, 0, x0 + w, 0), QtCore.QRectF(x0, y0, w, rect.height())),
-                                   ((x1, 0, x1 - w, 0), QtCore.QRectF(x1 - w, y0, w, rect.height())),
-                                   ((0, y0, 0, y0 + w), QtCore.QRectF(x0, y0, rect.width(), w)),
-                                   ((0, y1, 0, y1 - w), QtCore.QRectF(x0, y1 - w, rect.width(), w))):
+    x0, y0, x1, y1 = rect.left(), rect.top(), rect.right() + 1, rect.bottom() + 1
+    H, W = rect.height(), rect.width()
+    for (ax, ay, bx, by), band in (((x0, 0, x0 + w, 0), QtCore.QRectF(x0, y0, w, H)),
+                                   ((x1, 0, x1 - w, 0), QtCore.QRectF(x1 - w, y0, w, H)),
+                                   ((0, y0, 0, y0 + w), QtCore.QRectF(x0, y0, W, w)),
+                                   ((0, y1, 0, y1 - w), QtCore.QRectF(x0, y1 - w, W, w))):
         g = QtGui.QLinearGradient(ax, ay, bx, by)
-        g.setColorAt(0.0, solid)
-        g.setColorAt(0.45, QtGui.QColor(base.red(), base.green(), base.blue(), int(255 * a * 0.35)))
-        g.setColorAt(1.0, clear)
+        g.setColorAt(0.0, solid); g.setColorAt(0.45, mid); g.setColorAt(1.0, clear)
         p.fillRect(band, QtGui.QBrush(g))
+
+    if s.get("vignette_style") == "glitch":
+        def col(c, alpha):
+            q = QtGui.QColor(c); q.setAlphaF(max(0.0, min(1.0, alpha * level)))
+            return q
+        k = 3 * split                                     # how far the two rims drift apart
+        red, cyan, white = col(RED, 0.85), col(CYAN, 0.85), col(WHITE, 0.55)
+        t = 3                                             # rim thickness
+        # red rim hugs the top/left, cyan is pushed in from the bottom/right - the split
+        p.fillRect(QtCore.QRectF(x0 + k, y0 + k, W - 2 * k, t), red)
+        p.fillRect(QtCore.QRectF(x0 + k, y0 + k, t, H - 2 * k), red)
+        p.fillRect(QtCore.QRectF(x0 + 2 * k, y1 - k - t, W - 3 * k, t), cyan)
+        p.fillRect(QtCore.QRectF(x1 - k - t, y0 + 2 * k, t, H - 3 * k), cyan)
+        # a faint white rim between them
+        p.fillRect(QtCore.QRectF(x0 + 1, y0 + 1, W - 2, 1), col(WHITE, 0.25))
+        p.fillRect(QtCore.QRectF(x0 + 1, y1 - 2, W - 2, 1), col(WHITE, 0.25))
+        palette = {"r": red, "c": cyan, "w": white}
+        for side, pos, thick, depth, ck in slices:        # torn slices jumping in from the edge
+            c = palette[ck]
+            ghost = cyan if ck == "r" else red
+            if side == "L":
+                r = QtCore.QRectF(x0, y0 + pos, depth, thick)
+            elif side == "R":
+                r = QtCore.QRectF(x1 - depth, y0 + pos, depth, thick)
+            elif side == "T":
+                r = QtCore.QRectF(x0 + pos, y0, thick, depth)
+            else:
+                r = QtCore.QRectF(x0 + pos, y1 - depth, thick, depth)
+            p.fillRect(r.translated(k if side in "LR" else 0, 0 if side in "LR" else k), col(ghost, 0.45))
+            p.fillRect(r, c)
     p.restore()
 
 
@@ -221,6 +266,7 @@ class _Overlay(QtWidgets.QWidget):
         self.ctrl_depth = 0              # > 0 while a controlling request is running
         self.last_control = 0.0
         self.ctrl_level = 0.0            # 0..1, eased - the edge fade's opacity
+        self.edge_slices, self.edge_split = [], 1
         self._follow()
         main.installEventFilter(self)
         self._timer = QtCore.QTimer(self)
@@ -256,6 +302,13 @@ class _Overlay(QtWidgets.QWidget):
         self.ctrl_level += (target - self.ctrl_level) * (0.25 if target > self.ctrl_level else 0.12)
         if self.ctrl_level < 0.005:
             self.ctrl_level = 0.0
+        if self.ctrl_level > 0 and SETTINGS.get("vignette_style") == "glitch":
+            if random.random() < 0.35:                   # the edge tears re-roll a few times a second
+                self.edge_slices = make_edge_glitch(QtCore.QRectF(self.rect()),
+                                                    {"off": 0.3, "calm": 0.7, "wild": 1.3}[SETTINGS["glitch"]])
+                self.edge_split = random.choice((1, 1, 2, 3))
+            elif random.random() < 0.25:
+                self.edge_slices, self.edge_split = [], 1
         if now - self.last_active > 20 and not self.ripples and self.ctrl_level == 0.0:
             self.hide()                                                    # idle: fade out of the way
         self.update()
@@ -268,7 +321,8 @@ class _Overlay(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         now = time.time()
         if SETTINGS["vignette"] and self.ctrl_level > 0:
-            paint_edges(p, QtCore.QRectF(self.rect()), SETTINGS, self.ctrl_level)
+            paint_edges(p, QtCore.QRectF(self.rect()), SETTINGS, self.ctrl_level,
+                        self.edge_slices, self.edge_split)
         for pt, t0 in (self.ripples if SETTINGS["ripples"] else ()):        # click ripples
             k = (now - t0) / 0.6
             c = QtGui.QColor(WHITE); c.setAlphaF(max(0.0, 0.8 * (1 - k)))
