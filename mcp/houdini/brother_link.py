@@ -462,7 +462,7 @@ def _write_registry():
         json.dump({"pid": os.getpid(), "port": _state["port"], "token": _state["token"],
                    "version": VERSION, "houdini": hou.applicationVersionString(),
                    "hip": hou.hipFile.path(), "started": time.time()}, fh)
-    try:                                           # the token is only for this Windows user
+    try:                                           # POSIX only: on Windows chmod just sets read-only; the file is private because it sits in the user profile
         os.chmod(path, 0o600)
     except OSError:
         pass

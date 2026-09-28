@@ -158,3 +158,36 @@ running session and crashed with `Internal C++ object (ClaudeSession) already de
 process-finished handler is now a bound method, disconnected in `stop()`.
 
 The header shows only the session's token count - no dollar figure (Plug's call, 2026-09-28).
+
+## Review fixes (2026-09-28)
+
+A three-part review (chat bugs, Houdini-side bugs, gaps against Claude Code) led to these fixes, each tested live on Haiku:
+
+- **Model and mode belong to each conversation.** A new session always starts in "Ask first";
+  it used to inherit whatever the previous one was set to, Bypass included. The menus show the
+  real state: the CLI's `status.permissionMode` wins, and a refused switch is shown and reverted.
+  Launched with `--allow-dangerously-skip-permissions` so Bypass can be chosen later — that flag
+  only makes it selectable.
+- **AskUserQuestion** gets a real question card (radio/checkbox + Other); the answers go back in
+  `updatedInput.answers`. **ExitPlanMode** shows the plan as markdown with Approve + accept edits
+  (`setMode acceptEdits`), Approve, and Keep planning (with feedback).
+- Question cards **expire** on Stop, on the end of the turn, on `control_cancel_request`, or if
+  claude exits. Unknown control requests (elicitation, ...) are answered with an error instead of
+  hanging the turn.
+- Switching sessions **never blocks** (no `waitForFinished` on the UI thread). A conversation with
+  a turn, a question or background tasks (`task_started` / `task_notification` /
+  `background_tasks_changed`) is not parked.
+- `errorOccurred(FailedToStart)` ends the turn instead of leaving it busy forever. A session with
+  no turns yet relaunches with `--session-id`, not `--resume` (that errored "No conversation found").
+- Header: context-window % from `get_context_usage`, instead of a summed token count that meant
+  nothing. A banner shows `rate_limit_event` warnings or rejections. Compaction, API retries and
+  notifications appear as notes. `result.errors[]` is shown, not "error: None". The init line
+  appears once, not every turn.
+- History hides transcript stubs with no user turn.
+- Cursor: the Mosh bands are cached per showing, not rebuilt every frame. The control counter is
+  kept even while edges are off, so they can't get stuck on. A broken `cursor.json` can't stop
+  brother_link. The overlay timer stops while hidden. The shelf's Preview Edges always pairs its
+  calls.
+
+Still open, next round: rewind files, image thumbnails in tool results, model list from
+`initialize`, effort control, fork/rename session, and per-subagent streams.

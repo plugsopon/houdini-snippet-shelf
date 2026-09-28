@@ -120,7 +120,9 @@ def list_sessions(cwd, limit=60):
                             title = t
         except OSError:
             continue
-        rows.append((sid, (title or "(empty session)").splitlines()[0][:80], os.path.getmtime(path)))
+        if title is None:            # no user turn (a stub a closing process left behind): not a session
+            continue
+        rows.append((sid, title.splitlines()[0][:80], os.path.getmtime(path)))
     rows.sort(key=lambda r: r[2], reverse=True)
     return rows[:limit]
 
@@ -183,14 +185,15 @@ class ClaudeSession(QtCore.QObject):
     event = QtCore.Signal(dict)
     ended = QtCore.Signal(int, str)
 
-    def __init__(self, cwd, resume=None, model=None, mode="default", parent=None):
+    def __init__(self, cwd, resume=None, model=None, mode="default", parent=None, session_id=None):
         super().__init__(parent)
         self.cwd, self.resume, self.model, self.mode = cwd, resume, model, mode
-        self.session_id = resume or str(uuid.uuid4())
+        self.session_id = resume or session_id or str(uuid.uuid4())
         self.proc = None
         self.buf = b""
         self.commands = []
         self.busy = False
+        self.parked = False               # closed on purpose: its exit is not news
         self._err = b""
 
     def start(self):
@@ -199,6 +202,8 @@ class ClaudeSession(QtCore.QObject):
             raise RuntimeError("claude CLI not found - install Claude Code (npm i -g @anthropic-ai/claude-code)")
         args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--permission-prompt-tool", "stdio",
+                # makes Bypass selectable from the mode menu later; it does NOT turn it on
+                "--allow-dangerously-skip-permissions",
                 "--permission-mode", self.mode, "--append-system-prompt", houdini_context()]
         args += ["--resume", self.resume] if self.resume else ["--session-id", self.session_id]
         if self.model:
@@ -216,24 +221,48 @@ class ClaudeSession(QtCore.QObject):
         p.setWorkingDirectory(self.cwd)
         p.setProcessEnvironment(claude_env())
         p.readyReadStandardOutput.connect(self._read)
-        p.readyReadStandardError.connect(lambda: setattr(self, "_err", (self._err + bytes(p.readAllStandardError()))[-4000:]))
+        p.readyReadStandardError.connect(self._read_err)
         p.finished.connect(self._finished)
-        p.start()
+        p.errorOccurred.connect(self._error)
         self.proc = p
+        p.start()
         self.control("initialize", hooks=None)           # answers with the slash-command list
+
+    def _read_err(self):
+        try:
+            self._err = (self._err + bytes(self.proc.readAllStandardError()))[-4000:]
+        except RuntimeError:
+            pass
 
     def _finished(self, code, _status=None):
         # a bound method, not a lambda: Qt drops it with the object, so a process that exits after
         # its session was deleted can no longer call into a dead C++ object
         self.busy = False
         try:
-            self.ended.emit(code, self._err.decode("utf8", "replace"))
+            self.ended.emit(code, "" if self.parked else self._err.decode("utf8", "replace"))
         except RuntimeError:
             pass
 
+    def _error(self, err):
+        # FailedToStart never emits finished - without this the turn stays "busy" forever
+        if err == QtCore.QProcess.FailedToStart:
+            self.busy = False
+            try:
+                self.ended.emit(-1, "could not start claude (%s)" % self.proc.program())
+            except RuntimeError:
+                pass
+
+    def running(self):
+        try:
+            return self.proc is not None and self.proc.state() != QtCore.QProcess.NotRunning
+        except RuntimeError:
+            return False
+
     def _write(self, obj):
-        if self.proc is not None and self.proc.state() != QtCore.QProcess.NotRunning:
+        if self.running():
             self.proc.write((json.dumps(obj) + "\n").encode("utf8"))
+            return True
+        return False
 
     def control(self, subtype, **kw):
         rid = "hou-%s" % uuid.uuid4().hex[:10]
@@ -246,8 +275,11 @@ class ClaudeSession(QtCore.QObject):
         content = [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}}
                    for mt, data in images]
         content.append({"type": "text", "text": text})
+        if not self._write({"type": "user", "message": {"role": "user", "content": content}}):
+            self.ended.emit(-1, "claude is not running - the message was not sent")
+            return False
         self.busy = True
-        self._write({"type": "user", "message": {"role": "user", "content": content}})
+        return True
 
     def answer_permission(self, request_id, allow, tool_input=None, message="", permissions=None):
         if allow:
@@ -256,11 +288,19 @@ class ClaudeSession(QtCore.QObject):
                 resp["updatedPermissions"] = permissions
         else:
             resp = {"behavior": "deny", "message": message or "Plug denied this in the Houdini chat panel."}
-        self._write({"type": "control_response", "response": {"subtype": "success",
-                                                              "request_id": request_id, "response": resp}})
+        return self._write({"type": "control_response", "response": {"subtype": "success",
+                                                                     "request_id": request_id, "response": resp}})
+
+    def refuse(self, request_id, why):
+        """Any control request we can't serve gets an answer, so the turn doesn't wait forever."""
+        self._write({"type": "control_response", "response": {"subtype": "error", "request_id": request_id,
+                                                              "error": why}})
 
     def _read(self):
-        self.buf += bytes(self.proc.readAllStandardOutput())
+        try:
+            self.buf += bytes(self.proc.readAllStandardOutput())
+        except RuntimeError:
+            return
         *lines, self.buf = self.buf.split(b"\n")
         for raw in lines:
             raw = raw.strip()
@@ -280,27 +320,28 @@ class ClaudeSession(QtCore.QObject):
                 self.busy = False
             self.event.emit(o)
 
-    def running(self):
-        try:
-            return self.proc is not None and self.proc.state() != QtCore.QProcess.NotRunning
-        except RuntimeError:
-            return False
-
     def stop(self):
-        if self.running():
+        """Close stdin and let claude exit on its own. Never waits on the UI thread (a blocking
+        wait froze all of Houdini on every session switch); a straggler is killed later."""
+        if not self.running():
+            return
+        self.parked = True
+        try:
+            self.proc.closeWriteChannel()
+        except RuntimeError:
+            return
+        proc = self.proc
+
+        def _kill():
             try:
-                self.proc.finished.disconnect(self._finished)
-            except (RuntimeError, TypeError):
-                pass
-            try:
-                self.proc.closeWriteChannel()
-                if not self.proc.waitForFinished(1500):
-                    self.proc.kill()
+                if proc.state() != QtCore.QProcess.NotRunning:
+                    proc.kill()
             except RuntimeError:
                 pass
+        QtCore.QTimer.singleShot(4000, _kill)
 
 
-# ============================================================================ widgets
+# =========================================================================== widgets
 CSS = """
 #panel { background: #141418; border: 1px solid #34343c; border-radius: 12px; }
 #side { background: #101014; border-right: 1px solid #26262c; }
@@ -378,7 +419,7 @@ def _short(v, n=90):
 
 
 TOOL_KEY = {"Read": "file_path", "Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path",
-            "Bash": "command", "Glob": "pattern", "Grep": "pattern", "WebFetch": "url",
+            "Bash": "command", "PowerShell": "command", "Glob": "pattern", "Grep": "pattern", "WebFetch": "url",
             "WebSearch": "query", "Agent": "description", "Task": "description", "Skill": "skill"}
 
 
@@ -456,37 +497,144 @@ def _esc(s):
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-class PermissionCard(QtWidgets.QFrame):
+class _Card(QtWidgets.QFrame):
+    """A question from Claude that waits for Plug. Expires when the turn ends without an answer."""
     def __init__(self, req, answer, parent=None):
         super().__init__(parent)
         self.setObjectName("perm")
-        r = req["request"]
-        lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(12, 10, 12, 10); lay.setSpacing(6)
-        name = r.get("display_name") or r.get("tool_name")
-        lay.addWidget(QtWidgets.QLabel("<b>Brother wants to use %s</b>" % _esc(name)))
-        desc = r.get("description") or _short(r.get("input"), 200)
-        d = QtWidgets.QLabel(_esc(desc)); d.setWordWrap(True); d.setObjectName("dim"); lay.addWidget(d)
-        row = QtWidgets.QHBoxLayout(); lay.addLayout(row)
+        self.req, self.r, self.answer = req, req["request"], answer
+        self.rid = req["request_id"]
+        self.live = True
+        self.lay = QtWidgets.QVBoxLayout(self); self.lay.setContentsMargins(12, 10, 12, 10); self.lay.setSpacing(6)
         self.buttons = []
 
-        def done(text):
-            for b in self.buttons:
-                b.setEnabled(False)
-            note = QtWidgets.QLabel(text); note.setObjectName("dim"); lay.addWidget(note)
+    def button(self, row, text, fn, primary=False):
+        b = QtWidgets.QPushButton(text, objectName="primary" if primary else "")
+        b.clicked.connect(fn)
+        row.addWidget(b); self.buttons.append(b)
+        return b
 
-        yes = QtWidgets.QPushButton("Allow", objectName="primary")
-        yes.clicked.connect(lambda: (answer(req["request_id"], True, r.get("input")), done("Allowed once")))
-        row.addWidget(yes); self.buttons.append(yes)
+    def done(self, text):
+        self.live = False
+        for w in self.buttons:
+            w.setEnabled(False)
+        note = QtWidgets.QLabel(text); note.setObjectName("dim"); self.lay.addWidget(note)
+
+    def send(self, allow, text, **kw):
+        if not self.live:
+            return
+        ok = self.answer(self.rid, allow, **kw)
+        self.done(text if ok else "Not delivered - claude has stopped")
+
+    def expire(self, why="Expired - the turn ended before an answer"):
+        if self.live:
+            self.done(why)
+            self.setStyleSheet("QFrame#perm{border-color:#3a3a42;background:#16161a;}")
+
+
+SUGG_WHERE = {"session": "this session", "localSettings": "this project, saved to .claude/settings.local.json",
+              "projectSettings": "this project, saved to .claude/settings.json", "userSettings": "all projects"}
+
+
+class PermissionCard(_Card):
+    def __init__(self, req, answer, parent=None):
+        super().__init__(req, answer, parent)
+        r = self.r
+        name = r.get("display_name") or r.get("tool_name")
+        who = " (subagent)" if r.get("agent_id") else ""
+        self.lay.addWidget(QtWidgets.QLabel("<b>Brother wants to use %s%s</b>" % (_esc(name), who)))
+        desc = r.get("description") or _short(r.get("input"), 300)
+        d = QtWidgets.QLabel(_esc(desc)); d.setWordWrap(True); d.setObjectName("dim"); self.lay.addWidget(d)
+        if r.get("decision_reason"):
+            why = QtWidgets.QLabel(_esc(r["decision_reason"])); why.setWordWrap(True); why.setObjectName("dim")
+            self.lay.addWidget(why)
+        row = QtWidgets.QHBoxLayout(); self.lay.addLayout(row)
+        self.button(row, "Allow", lambda: self.send(True, "Allowed once", tool_input=r.get("input")), True)
         sugg = r.get("permission_suggestions")
         if sugg:
-            always = QtWidgets.QPushButton("Allow for this session")
-            always.clicked.connect(lambda: (answer(req["request_id"], True, r.get("input"), permissions=sugg),
-                                            done("Allowed for this session")))
-            row.addWidget(always); self.buttons.append(always)
-        no = QtWidgets.QPushButton("Deny")
-        no.clicked.connect(lambda: (answer(req["request_id"], False), done("Denied")))
-        row.addWidget(no); self.buttons.append(no)
+            wheres = {x.get("destination") for x in sugg if isinstance(x, dict)}
+            where = " / ".join(SUGG_WHERE.get(w, w) for w in wheres if w) or "this session"
+            b = self.button(row, "Always allow", lambda: self.send(True, "Always allowed - " + where,
+                                                                   tool_input=r.get("input"), permissions=sugg))
+            b.setToolTip("Remembered for: " + where)
+        self.button(row, "Deny", lambda: self.send(False, "Denied", message=self.fb.text().strip()))
+        self.fb = QtWidgets.QLineEdit(); self.fb.setPlaceholderText("or tell Brother what to do instead, then Deny")
+        self.fb.setStyleSheet("background:#0d0d10;color:#ddd;border:1px solid #36363e;border-radius:6px;padding:4px;")
+        self.fb.returnPressed.connect(lambda: self.send(False, "Denied", message=self.fb.text().strip()))
+        row.addWidget(self.fb, 1)
+
+
+class QuestionCard(_Card):
+    """AskUserQuestion: Claude asks Plug to pick. The answers go back inside updatedInput."""
+    def __init__(self, req, answer, parent=None):
+        super().__init__(req, answer, parent)
+        inp = self.r.get("input") or {}
+        self.qs = []
+        self.lay.addWidget(QtWidgets.QLabel("<b>Brother has a question</b>"))
+        for q in inp.get("questions") or []:
+            box = QtWidgets.QFrame(); bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(0, 4, 0, 4); bl.setSpacing(3)
+            head = q.get("header")
+            t = QtWidgets.QLabel(("<span style='color:#ffb84d'>%s</span>  " % _esc(head) if head else "") + _esc(q.get("question", "")))
+            t.setWordWrap(True); bl.addWidget(t)
+            group = QtWidgets.QButtonGroup(box); group.setExclusive(not q.get("multiSelect"))
+            opts = []
+            for o in q.get("options") or []:
+                w = (QtWidgets.QCheckBox if q.get("multiSelect") else QtWidgets.QRadioButton)(o.get("label", ""))
+                w.setStyleSheet("color:#e6e6ea;")
+                if o.get("description"):
+                    w.setToolTip(o["description"])
+                group.addButton(w); bl.addWidget(w); opts.append(w)
+                if o.get("description"):
+                    dl = QtWidgets.QLabel(_esc(o["description"])); dl.setObjectName("dim"); dl.setWordWrap(True)
+                    dl.setContentsMargins(22, 0, 0, 0); bl.addWidget(dl)
+            other = QtWidgets.QLineEdit(); other.setPlaceholderText("Other...")
+            other.setStyleSheet("background:#0d0d10;color:#ddd;border:1px solid #36363e;border-radius:6px;padding:4px;")
+            bl.addWidget(other)
+            self.lay.addWidget(box)
+            self.qs.append((q, opts, other))
+        row = QtWidgets.QHBoxLayout(); self.lay.addLayout(row)
+        self.button(row, "Answer", self._submit, True)
+        self.button(row, "Skip", lambda: self.send(False, "Skipped",
+                                                   message="Plug skipped the question - decide sensibly or ask differently."))
         row.addStretch(1)
+
+    def _submit(self):
+        answers = {}
+        for q, opts, other in self.qs:
+            picked = [w.text() for w in opts if w.isChecked()]
+            if other.text().strip():
+                picked.append(other.text().strip())
+            if picked:
+                answers[q.get("question", "")] = ", ".join(picked)
+        if not answers:
+            return
+        inp = dict(self.r.get("input") or {})
+        inp["answers"] = answers
+        self.send(True, "Answered: " + "; ".join(answers.values()), tool_input=inp)
+
+
+class PlanCard(_Card):
+    """ExitPlanMode: the plan, readable, with the three choices Claude Code offers."""
+    def __init__(self, req, answer, parent=None):
+        super().__init__(req, answer, parent)
+        inp = self.r.get("input") or {}
+        self.lay.addWidget(QtWidgets.QLabel("<b>Brother's plan - ready to start?</b>"))
+        self.lay.addWidget(AutoText(inp.get("plan") or _short(inp, 2000)))
+        row = QtWidgets.QHBoxLayout(); self.lay.addLayout(row)
+        self.button(row, "Approve + accept edits", lambda: self.send(
+            True, "Approved - edits accepted automatically", tool_input=inp,
+            permissions=[{"type": "setMode", "mode": "acceptEdits", "destination": "session"}]), True)
+        self.button(row, "Approve", lambda: self.send(True, "Approved - each edit still asks", tool_input=inp))
+        self.button(row, "Keep planning", lambda: self.send(
+            False, "Keep planning", message=self.fb.text().strip() or "Plug wants to keep planning."))
+        self.fb = QtWidgets.QLineEdit(); self.fb.setPlaceholderText("what to change in the plan...")
+        self.fb.setStyleSheet("background:#0d0d10;color:#ddd;border:1px solid #36363e;border-radius:6px;padding:4px;")
+        row.addWidget(self.fb, 1)
+
+
+def make_card(req, answer):
+    name = (req.get("request") or {}).get("tool_name")
+    return {"AskUserQuestion": QuestionCard, "ExitPlanMode": PlanCard}.get(name, PermissionCard)(req, answer)
 
 
 class Composer(QtWidgets.QPlainTextEdit):
@@ -505,6 +653,8 @@ class Composer(QtWidgets.QPlainTextEdit):
             self.submit.emit(); return
         if e.key() == QtCore.Qt.Key_Escape:
             self.escape.emit(); return
+        if e.key() == QtCore.Qt.Key_Backspace and not self.toPlainText() and self.images:
+            self.images = []; self.parent_panel().refresh_chips(); return
         super().keyPressEvent(e)
 
     def insertFromMimeData(self, md):                           # paste an image straight in
@@ -526,21 +676,26 @@ class Composer(QtWidgets.QPlainTextEdit):
 
 # ============================================================================ the panel
 class Convo(QtCore.QObject):
-    """One conversation: its own claude process and its own feed. Several can run at once;
-    the panel only decides which one is on screen."""
+    """One conversation: its own claude process, feed, model and permission mode. Several can
+    run at once; the panel only decides which one is on screen."""
 
-    def __init__(self, panel, resume=None, title="New session"):
+    def __init__(self, panel, resume=None, title="New session", model=None):
         super().__init__(panel)
         self.panel = panel
         self.title = title
         self.session = None
         self.sid = resume
+        self.has_history = bool(resume)   # only a conversation with turns on disk can be --resume'd
+        self.model = model
+        self.mode = "default"             # every conversation starts asking first
         self.cards = {}
+        self.asks = {}                    # request_id -> live question card
+        self.ctrl = {}                    # our control request_id -> what it was
+        self.tasks = {}                   # background task_id -> description
         self.cur_text = self.cur_think = self.cur_tool = None
-        self.total_cost = 0.0
-        self.tokens = 0
+        self.context = None               # (used, max) from get_context_usage
         self.api_source = None            # "none" = signed in with the subscription, not an API key
-        self.waiting = False              # a permission question is open
+        self.announced = None
         self.follow = True
         self.scroll = QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
@@ -552,21 +707,40 @@ class Convo(QtCore.QObject):
         sb.rangeChanged.connect(lambda _a, mx: self.follow and sb.setValue(mx))
         sb.valueChanged.connect(lambda v: setattr(self, "follow", v >= sb.maximum() - 30))
 
-    # ---------------------------------------------------------------- process
+    # ---------------------------------------------------------------- state
     @property
     def busy(self):
         return bool(self.session is not None and self.session.busy)
 
+    @property
+    def waiting(self):
+        return any(c.live for c in self.asks.values())
+
+    @property
+    def working(self):
+        """Anything still going on: a turn, a question, or background tasks."""
+        return self.busy or self.waiting or bool(self.tasks)
+
+    def _expire_asks(self, why=None):
+        for c in self.asks.values():
+            c.expire(why) if why else c.expire()
+        self.asks = {}
+
+    # ---------------------------------------------------------------- process
     def start(self):
-        if self.session is not None and self.session.running():
+        if self.session is not None and self.session.running() and not self.session.parked:
             return
         old = self.session
-        self.session = ClaudeSession(self.panel.cwd, self.sid, self.panel.model_box.currentData(),
-                                     self.panel.mode_box.currentData(), self)
+        if old is not None:
+            for sig, slot in ((old.event, self.on_event), (old.ended, self.on_ended)):
+                try:
+                    sig.disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
+        self.session = ClaudeSession(self.panel.cwd, self.sid if self.has_history else None, self.model,
+                                     self.mode, self, session_id=self.sid)
         self.session.event.connect(self.on_event)
         self.session.ended.connect(self.on_ended)
-        if old is not None:
-            old.deleteLater()
         _ensure_link()
         try:
             self.session.start()
@@ -575,16 +749,37 @@ class Convo(QtCore.QObject):
             self.add_note(str(e), "#ff8a9a")
 
     def park(self):
-        """Leaving an idle conversation: end its process (it resumes on the next message)."""
-        if self.session is not None and not self.session.busy and not self.waiting:
+        """Leaving an idle conversation: end its process (it resumes on the next message).
+        Never while a turn, a question or a background task is still going."""
+        if self.session is not None and not self.working:
             self.session.stop()
 
     def send(self, text, imgs):
         self.start()
         self.add_user(text, len(imgs))
-        self.session.send(text, imgs)
+        if self.session.send(text, imgs):
+            self.has_history = True
         self.follow = True
         self.panel.convo_changed(self)
+
+    def control(self, what, subtype, **kw):
+        self.start()
+        rid = self.session.control(subtype, **kw)
+        self.ctrl[rid] = what
+        return rid
+
+    def set_mode(self, mode):
+        if mode == self.mode:
+            return
+        if self.session is not None and self.session.running() and not self.session.parked:
+            self.control(("mode", mode), "set_permission_mode", mode=mode)
+        else:
+            self.mode = mode              # applied at the next launch
+
+    def set_model(self, model):
+        self.model = model
+        if self.session is not None and self.session.running() and not self.session.parked:
+            self.control(("model", model), "set_model", model=model or "default")
 
     # ---------------------------------------------------------------- feed
     def _add(self, w):
@@ -643,21 +838,99 @@ class Convo(QtCore.QObject):
 
     # ---------------------------------------------------------------- events from claude
     def _answer(self, *a, **kw):
-        self.waiting = False
-        self.session.answer_permission(*a, **kw)
+        ok = self.session.answer_permission(*a, **kw)
+        self.panel.convo_changed(self)
+        return ok
+
+    def _system(self, o):
+        st = o.get("subtype")
+        if o.get("permissionMode") and o["permissionMode"] != self.mode:
+            self.mode = o["permissionMode"]           # plan approved, EnterPlanMode, ...: the truth
+            self.panel.convo_changed(self)
+        if st == "init":
+            self.sid = o.get("session_id") or self.sid
+            self.api_source = o.get("apiKeySource")
+            mcp = ", ".join("%s %s" % (m.get("name"), m.get("status")) for m in o.get("mcp_servers") or [])
+            line = "claude %s  model %s  %s  mcp: %s" % (
+                o.get("claude_code_version", ""), o.get("model"),
+                "subscription" if self.api_source == "none" else "api key (%s)" % self.api_source, mcp or "none")
+            if line != self.announced:                # init comes every turn - say it once
+                self.announced = line
+                self.add_note(line)
+            self.panel.convo_changed(self)
+        elif st == "status":
+            if o.get("status") == "compacting":
+                self.add_note("Compacting the conversation...")
+            elif o.get("compact_error"):
+                self.add_note("Compact failed: %s" % o["compact_error"], "#ff8a9a")
+        elif st == "compact_boundary":
+            m = o.get("compact_metadata") or {}
+            self.add_note("──  Conversation compacted (%s, was %s tokens)  ──" % (
+                m.get("trigger", "?"), _k(m.get("pre_tokens") or 0)), "#9a9aff")
+            self.ask_context()
+        elif st == "api_retry":
+            self.add_note("API busy - retry %s/%s in %.0fs (%s)" % (
+                o.get("attempt"), o.get("max_retries"), (o.get("retry_delay_ms") or 0) / 1000.0,
+                o.get("error_status") or o.get("error") or ""), "#ffb84d")
+        elif st == "notification" and o.get("text"):
+            self.add_note(o["text"], "#ffb84d")
+        elif st == "task_started":
+            tid = o.get("task_id")
+            if tid:
+                self.tasks[tid] = o.get("description") or o.get("summary") or "background task"
+                self.panel.convo_changed(self)
+        elif st == "task_notification":
+            tid = o.get("task_id")
+            if tid and o.get("status") not in ("running", "pending", None):
+                self.tasks.pop(tid, None)
+                if o.get("summary"):
+                    self.add_note("Background task %s: %s" % (o.get("status"), _short(o["summary"], 200)))
+                self.panel.convo_changed(self)
+        elif st == "background_tasks_changed":
+            running = {}
+            for t in o.get("tasks") or []:
+                if isinstance(t, dict) and t.get("status") in ("running", "pending"):
+                    running[t.get("task_id") or t.get("id")] = t.get("description") or "background task"
+            self.tasks = running
+            self.panel.convo_changed(self)
+
+    def ask_context(self):
+        if self.session is not None and self.session.running() and not self.session.parked:
+            self.ctrl[self.session.control("get_context_usage")] = ("context",)
+
+    def _control_response(self, o):
+        r = o.get("response") or {}
+        what = self.ctrl.pop(r.get("request_id"), None)
+        if what is None:
+            return
+        if r.get("subtype") == "error":
+            if what[0] == "mode":
+                self.add_note("Could not switch to %s: %s" % (what[1], r.get("error")), "#ff8a9a")
+            elif what[0] == "model":
+                self.add_note("Could not switch model: %s" % r.get("error"), "#ff8a9a")
+            self.panel.convo_changed(self)             # the menus fall back to the real state
+            return
+        body = r.get("response") or {}
+        if what[0] == "mode":
+            self.mode = body.get("mode") or what[1]
+        elif what[0] == "context" and body.get("maxTokens"):
+            self.context = (body.get("totalTokens") or 0, body["maxTokens"])
         self.panel.convo_changed(self)
 
     def on_event(self, o):
         t = o.get("type")
         depth = 1 if o.get("parent_tool_use_id") else 0
-        if t == "system" and o.get("subtype") == "init":
-            self.sid = o.get("session_id") or self.sid
-            self.api_source = o.get("apiKeySource")
-            mcp = ", ".join("%s %s" % (m.get("name"), m.get("status")) for m in o.get("mcp_servers") or [])
-            self.add_note("claude %s  model %s  %s  mcp: %s" % (
-                o.get("claude_code_version", ""), o.get("model"),
-                "subscription" if self.api_source == "none" else "api key (%s)" % self.api_source, mcp or "none"))
+        if t == "system":
+            self._system(o)
+        elif t == "control_response":
+            self._control_response(o)
+        elif t == "control_cancel_request":
+            c = self.asks.pop(o.get("request_id"), None)
+            if c:
+                c.expire("Cancelled by Claude")
             self.panel.convo_changed(self)
+        elif t == "rate_limit_event":
+            self.panel.rate_limit(o.get("rate_limit_info") or {})
         elif t == "stream_event":
             ev = o.get("event") or {}
             et = ev.get("type")
@@ -693,26 +966,37 @@ class Convo(QtCore.QObject):
                     if c:
                         c.set_result(b.get("content"), b.get("is_error"))
             self.cur_text = None
-        elif t == "control_request" and (o.get("request") or {}).get("subtype") == "can_use_tool":
-            self.waiting = True
-            self._add(PermissionCard(o, self._answer))
+        elif t == "control_request":
+            req = o.get("request") or {}
+            if req.get("subtype") == "can_use_tool":
+                card = make_card(o, self._answer)
+                self.asks[o.get("request_id")] = card
+                self._add(card)
+            else:                                        # elicitation, hooks, ...: answer, never hang
+                self.session.refuse(o.get("request_id"), "not supported by the Houdini chat panel")
+                self.add_note("Claude asked for '%s', which this panel can't show yet - declined." % req.get("subtype"),
+                              "#ffb84d")
             self.panel.convo_changed(self)
         elif t == "result":
-            self.total_cost = o.get("total_cost_usd") or self.total_cost
             u = o.get("usage") or {}
             tokens = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
                       + u.get("cache_creation_input_tokens", 0))
-            self.tokens += tokens + u.get("output_tokens", 0)
-            self.add_note("%s  %.1fs   %s in / %s out" % ("done" if not o.get("is_error") else "error: %s" % o.get("result"),
-                                                         (o.get("duration_ms") or 0) / 1000.0,
-                                                         _k(tokens), _k(u.get("output_tokens", 0))),
-                          "#80808c" if not o.get("is_error") else "#ff8a9a")
+            if o.get("is_error"):
+                why = "; ".join(str(e) for e in (o.get("errors") or [])) or o.get("result") or o.get("subtype")
+                if o.get("api_error_status"):
+                    why = "%s (HTTP %s)" % (why, o["api_error_status"])
+                self.add_note("error: %s" % why, "#ff8a9a")
+            else:
+                self.add_note("done  %.1fs   %s in / %s out" % ((o.get("duration_ms") or 0) / 1000.0,
+                                                               _k(tokens), _k(u.get("output_tokens", 0))))
             self.cur_text = self.cur_think = self.cur_tool = None
-            self.waiting = False
+            self._expire_asks()
+            self.ask_context()
             self.panel.convo_changed(self, finished=True)
 
     def on_ended(self, code, err):
-        self.waiting = False
+        self._expire_asks("Expired - claude stopped")
+        self.tasks = {}
         if code not in (0, None) and err.strip():
             self.add_note("claude exited (%s): %s" % (code, err.strip()[-600:]), "#ff8a9a")
         self.panel.convo_changed(self)
@@ -779,6 +1063,11 @@ class ChatPanel(QtWidgets.QWidget):
         hide = QtWidgets.QPushButton("Hide", objectName="flat"); hide.clicked.connect(self.hide)
         head.addWidget(hide)
 
+        self.limit_bar = QtWidgets.QLabel(); self.limit_bar.setWordWrap(True); self.limit_bar.hide()
+        self.limit_bar.setStyleSheet("background:#2a2010;color:#ffcf7a;border:1px solid #6a5418;"
+                                     "border-radius:6px;padding:5px 8px;font-size:12px;")
+        main.addWidget(self.limit_bar)
+
         self.stack = QtWidgets.QStackedWidget()
         main.addWidget(self.stack, 1)
 
@@ -839,9 +1128,9 @@ class ChatPanel(QtWidgets.QWidget):
     def new_session(self):
         # reuse an untouched new session instead of stacking empty ones
         for c in self.convos:
-            if c.title == "New session" and not c.busy and c.feed.count() <= 3:
+            if c.title == "New session" and not c.working and c.feed.count() <= 3 and c.mode == "default":
                 self._show(c); return
-        c = Convo(self)
+        c = Convo(self, model=self.model_box.currentData())
         self.convos.append(c)
         c.add_note("New session in %s - Brother can see and drive this Houdini." % self.cwd)
         c.start()
@@ -851,11 +1140,20 @@ class ChatPanel(QtWidgets.QWidget):
         sid = item.data(QtCore.Qt.UserRole)
         c = self._convo_for(sid)
         if c is None:                               # first time opened this Houdini: replay + resume
-            c = Convo(self, resume=sid, title=item.data(QtCore.Qt.UserRole + 1) or "Session")
+            c = Convo(self, resume=sid, title=item.data(QtCore.Qt.UserRole + 1) or "Session",
+                      model=self.model_box.currentData())
             self.convos.append(c)
             c.load(sid)
             c.start()
         self._show(c)
+
+    @staticmethod
+    def _set_combo(box, value):
+        i = box.findData(value)
+        if i >= 0 and i != box.currentIndex():
+            box.blockSignals(True)
+            box.setCurrentIndex(i)
+            box.blockSignals(False)
 
     def convo_changed(self, c, finished=False):
         """Any conversation's state moved: refresh the list marks, and the header if it's on screen."""
@@ -867,31 +1165,65 @@ class ChatPanel(QtWidgets.QWidget):
         if c is not self.cur:
             return
         self.head_title.setText(c.title)
+        # the menus always show the on-screen conversation's REAL model and mode
+        self._set_combo(self.model_box, c.model)
+        self._set_combo(self.mode_box, c.mode)
         self.stop_btn.setVisible(c.busy)
         self.send_btn.setText("Queue" if c.busy else "Send")
-        # token count only - no dollar figure (the plan is not billed per call)
-        self.cost.setText("%s tok" % _k(c.tokens) if c.tokens else "")
-        self.cost.setToolTip("Tokens used in this session" + (" - on your Claude plan" if c.api_source == "none" else ""))
-        if c.session is not None and c.session.model:
-            self.status.setText("%s  %s" % (c.session.model or "default", self.mode_box.currentData()))
+        if c.context:
+            used, mx = c.context
+            pct = 100.0 * used / mx
+            self.cost.setText("context %d%%" % round(pct))
+            self.cost.setStyleSheet("color:%s;font-size:11px;" % ("#ff8a9a" if pct > 85 else "#ffb84d" if pct > 65 else "#80808c"))
+            self.cost.setToolTip("%s of %s tokens in the context window%s" % (
+                _k(used), _k(mx), "\nClaude will compact soon - or type /compact" if pct > 65 else ""))
+        else:
+            self.cost.setText("")
+        bits = [c.model or "default model", dict((v, l) for l, v in MODES).get(c.mode, c.mode)]
+        if c.tasks:
+            bits.append("%d background task%s" % (len(c.tasks), "s" if len(c.tasks) > 1 else ""))
+        self.status.setText("   ".join(bits))
+        self.status.setToolTip("\n".join(c.tasks.values()))
+
+    def rate_limit(self, info):
+        """Plan usage from the CLI: warn before the limit, say plainly when it's hit."""
+        st = info.get("status")
+        if st not in ("allowed_warning", "rejected"):
+            self.limit_bar.hide(); return
+        kind = {"five_hour": "5-hour", "seven_day": "weekly", "seven_day_opus": "weekly Opus"}.get(
+            info.get("rateLimitType"), info.get("rateLimitType") or "plan")
+        when = ""
+        if info.get("resetsAt"):
+            try:
+                when = " - resets %s" % datetime.datetime.fromtimestamp(float(info["resetsAt"])).strftime("%a %H:%M")
+            except (TypeError, ValueError, OSError):
+                pass
+        used = info.get("utilization")
+        pct = (" (%d%% used)" % round(float(used) * 100)) if isinstance(used, (int, float)) and used <= 1 else ""
+        if st == "rejected":
+            self.limit_bar.setText("Claude %s limit reached%s%s. Messages will wait until then." % (kind, pct, when))
+        else:
+            self.limit_bar.setText("Getting close to the Claude %s limit%s%s." % (kind, pct, when))
+        self.limit_bar.show()
 
     def refresh_sessions(self):
         sel = self.cur.sid if self.cur is not None else None
         rows = list_sessions(self.cwd)
         on_disk = {sid for sid, _t, _m in rows}
         # live conversations not written to disk yet go on top
-        live = [(c.sid, c.title, time.time()) for c in self.convos if c.sid and c.sid not in on_disk and c.busy]
+        live = [(c.sid, c.title, time.time()) for c in self.convos if c.sid and c.sid not in on_disk and c.working]
         self.list.clear()
         for sid, title, mtime in live + rows:
             c = self._convo_for(sid)
             mark = ""
             if c is not None and c.waiting:
                 mark = "?  "
-            elif c is not None and c.busy:
+            elif c is not None and c.working:
                 mark = SPIN[self._spin % len(SPIN)] + "  "
             it = QtWidgets.QListWidgetItem("%s%s\n%s" % (mark, title, datetime.datetime.fromtimestamp(mtime).strftime("%d %b %H:%M")))
             it.setData(QtCore.Qt.UserRole, sid)
             it.setData(QtCore.Qt.UserRole + 1, title)
+            it.setData(QtCore.Qt.UserRole + 2, "wait" if mark.startswith("?") else "spin" if mark else "")
             it.setToolTip(("Waiting for your answer - " if mark.startswith("?") else
                            "Working... - " if mark else "") + sid)
             if mark.startswith("?"):
@@ -904,13 +1236,12 @@ class ChatPanel(QtWidgets.QWidget):
 
     def _tick(self):
         """Spin the marks on working conversations."""
-        if not any(c.busy for c in self.convos):
+        if not any(c.working for c in self.convos):
             return
         self._spin += 1
         for i in range(self.list.count()):
             it = self.list.item(i)
-            c = self._convo_for(it.data(QtCore.Qt.UserRole))
-            if c is not None and c.busy and not c.waiting:
+            if it.data(QtCore.Qt.UserRole + 2) == "spin":
                 lines = it.text().split("\n", 1)
                 lines[0] = SPIN[self._spin % len(SPIN)] + lines[0][1:]
                 it.setText("\n".join(lines))
@@ -925,8 +1256,8 @@ class ChatPanel(QtWidgets.QWidget):
             self.composer.clear(); self.new_session(); return
         if text.startswith("/model "):
             m = text.split(None, 1)[1].strip()
-            self.cur.start(); self.session.control("set_model", model=m); self.cur.add_note("model -> %s" % m)
-            self.composer.clear(); return
+            self.cur.set_model(None if m == "default" else m); self.cur.add_note("model -> %s" % m)
+            self.composer.clear(); self.convo_changed(self.cur); return
         imgs = list(self.composer.images)
         self.cur.send(text, imgs)
         self.composer.clear(); self.composer.images = []; self.refresh_chips()
@@ -935,16 +1266,19 @@ class ChatPanel(QtWidgets.QWidget):
     def interrupt(self):
         if self.cur is not None and self.cur.busy:
             self.session.control("interrupt")
+            self.cur._expire_asks("Cancelled - you stopped the turn")
             self.cur.add_note("Stopped.", "#ff8a9a")
+            self.convo_changed(self.cur)
 
     def _model_changed(self):
-        if self.session is not None and self.session.running():
-            self.session.control("set_model", model=self.model_box.currentData() or "default")
+        if self.cur is not None:
+            self.cur.set_model(self.model_box.currentData())
+            self.convo_changed(self.cur)
 
     def _mode_changed(self):
-        if self.session is not None and self.session.running():
-            self.session.control("set_permission_mode", mode=self.mode_box.currentData())
-            self.status.setText("mode: %s" % self.mode_box.currentText())
+        if self.cur is not None:
+            self.cur.set_mode(self.mode_box.currentData())
+            self.convo_changed(self.cur)          # shows the real mode until the switch is confirmed
 
     def add_note(self, text, color="#80808c"):
         return self.cur.add_note(text, color)

@@ -52,8 +52,10 @@ def load_settings():
     try:
         import json
         with open(SETTINGS_FILE, encoding="utf8") as fh:
-            s.update({k: v for k, v in json.load(fh).items() if k in DEFAULTS})
-    except (OSError, ValueError):
+            data = json.load(fh)
+        if isinstance(data, dict):               # a torn or hand-edited file must never stop the link
+            s.update({k: v for k, v in data.items() if k in DEFAULTS})
+    except (OSError, ValueError, TypeError):
         pass
     if s["style"] not in STYLES:
         s["style"] = DEFAULTS["style"]
@@ -289,21 +291,24 @@ def paint_mosh(p, rect, s, level, st):
     p.restore()
 
 
+_CTRL = {"depth": 0, "last": 0.0}     # > 0 while a controlling request is running
+
+
 def control(active):
     """brother_link calls this around every request that CHANGES something (click, type,
     create, set, a run that isn't read-only). The edges fade in at once - even a long cook that
     blocks the event loop shows it - and fade out ~1s after the last request ends."""
+    # the count is kept whatever the setting says: turning the edges off mid-request used to skip
+    # the matching decrement and leave them stuck on once turned back on
+    _CTRL["depth"] = _CTRL["depth"] + 1 if active else max(0, _CTRL["depth"] - 1)
+    _CTRL["last"] = time.time()
     if not SETTINGS["vignette"]:
         return
     ov = _overlay()
-    if active:
-        ov.ctrl_depth += 1
-        if ov.ctrl_level < 0.6:
-            ov.ctrl_level = 0.6
-            ov.repaint()
-    else:
-        ov.ctrl_depth = max(0, ov.ctrl_depth - 1)
-    ov.last_control = ov.last_active = time.time()
+    if active and ov.ctrl_level < 0.6:
+        ov.ctrl_level = 0.6
+        ov.repaint()
+    ov.last_active = time.time()
 
 
 def paint_cursor(p, x, y, s=None, glitch=None, split=1):
@@ -405,8 +410,6 @@ class _Overlay(QtWidgets.QWidget):
         self.last_move = 0.0
         self.glitch, self.split = {}, 1
         self.has_cursor = False          # only draw the arrow once Brother has actually moved it
-        self.ctrl_depth = 0              # > 0 while a controlling request is running
-        self.last_control = 0.0
         self.ctrl_level = 0.0            # 0..1, eased - the edge fade's opacity
         self.edge_slices, self.edge_split = [], 1
         self.mosh = None
@@ -416,6 +419,15 @@ class _Overlay(QtWidgets.QWidget):
         self._timer.timeout.connect(self._tick)
         self._timer.start(30)
         self.show()
+
+    # the 30 ms animation only runs while the overlay is on screen
+    def showEvent(self, e):
+        self._timer.start(30)
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        self._timer.stop()
+        super().hideEvent(e)
 
     def _follow(self):
         """Sit exactly on top of the main window (same global rect) - so overlay coordinates
@@ -441,7 +453,7 @@ class _Overlay(QtWidgets.QWidget):
         elif random.random() < 0.5:
             self.glitch, self.split = {}, 1
         self.ripples = [r for r in self.ripples if now - r[1] < 0.6]
-        target = 1.0 if (self.ctrl_depth > 0 or now - self.last_control < 1.2) else 0.0
+        target = 1.0 if (_CTRL["depth"] > 0 or now - _CTRL["last"] < 1.2) else 0.0
         self.ctrl_level += (target - self.ctrl_level) * (0.25 if target > self.ctrl_level else 0.12)
         if self.ctrl_level < 0.005:
             self.ctrl_level = 0.0
@@ -461,7 +473,8 @@ class _Overlay(QtWidgets.QWidget):
                 self.edge_split = random.choice((1, 1, 2, 3))
             elif random.random() < 0.25:
                 self.edge_slices, self.edge_split = [], 1
-        self.mosh = None
+        if self.ctrl_level == 0.0:
+            self.mosh = None                                               # built once per showing, not per frame
         if now - self.last_active > 20 and not self.ripples and self.ctrl_level == 0.0:
             self.hide()                                                    # idle: fade out of the way
         self.update()

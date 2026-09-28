@@ -69,10 +69,12 @@ if "brother_cursor" in sys.modules:
 p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
 if p not in sys.path:
     sys.path.insert(0, p)
-import brother_cursor
-brother_cursor.control(True)
 import hdefereval, threading
-threading.Timer(2.5, lambda: hdefereval.executeInMainThreadWithResult(brother_cursor.control, False)).start()
+import brother_cursor
+try:
+    brother_cursor.control(True)
+finally:   # always pair the call, or the edges stay on
+    threading.Timer(2.5, lambda: hdefereval.executeInMainThreadWithResult(brother_cursor.control, False)).start()
 ]]></script>
   </tool>
 </shelfDocument>
