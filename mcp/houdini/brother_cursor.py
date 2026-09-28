@@ -362,5 +362,146 @@ def op_cursor_hide(args):
     return {"hidden": True}
 
 
+# ----------------------------------------------------------------------------- panes by API
+# Nodes and panes can be FOUND through hou, no picture needed: a pane tab knows its rect on
+# screen (qtScreenGeometry), a Network Editor can turn a node position into a pixel
+# (posToScreen), and a Parameter pane that shares a Network Editor's link group shows
+# whatever is selected there. Only the fields INSIDE a Parameter pane have no API.
+def _pane_rect(tab):
+    """A pane tab's rect in main-window coordinates (the click space)."""
+    g = tab.qtScreenGeometry()
+    tl = _main().mapFromGlobal(QtCore.QPoint(g.x(), g.y()))
+    return QtCore.QRect(tl.x(), tl.y(), g.width(), g.height())
+
+
+def _current_tabs(kind):
+    return [t for t in hou.ui.paneTabs() if t.type() == kind and t.isCurrentTab()]
+
+
+def _editor_for(node):
+    """A visible Network Editor showing node's parent network - switching one there if none
+    already is (that is a visible jump, like clicking the path bar)."""
+    parent = node.parent()
+    eds = _current_tabs(hou.paneTabType.NetworkEditor)
+    if not eds:
+        raise RuntimeError("no Network Editor is open on this desktop")
+    for ne in eds:
+        if ne.pwd() == parent:
+            return ne
+    ne = eds[0]
+    ne.setPwd(parent)
+    _pump(0.2)
+    return ne
+
+
+def _node_point(ne, node):
+    """Centre of `node` in main-window pixels, panning the editor first if it is off screen."""
+    def to_window():
+        # map through visibleBounds ourselves: posToScreen keeps answering for the OLD view
+        # until Houdini repaints, so right after a pan it points at where the node used to be
+        vb, (w, h) = ne.visibleBounds(), ne.screenBounds().size()
+        c = node.position() + node.size() * 0.5
+        s = ((c[0] - vb.min()[0]) / (vb.max()[0] - vb.min()[0]) * w,
+             (c[1] - vb.min()[1]) / (vb.max()[1] - vb.min()[1]) * h)
+        g = ne.qtScreenGeometry()
+        gp = QtCore.QPoint(int(g.x() + s[0]), int(g.y() + g.height() - s[1]))
+        return _main().mapFromGlobal(gp), s
+    p, s = to_window()
+    w, h = ne.screenBounds().size()
+    if not (20 <= s[0] <= w - 20 and 20 <= s[1] <= h - 20):
+        vb = ne.visibleBounds()
+        vb.translate(node.position() + node.size() * 0.5 - vb.center())
+        ne.setVisibleBounds(vb)
+        _pump(0.2)
+        p, s = to_window()
+    return p
+
+
+def _parm_pane_for(ne, node):
+    """The Parameter pane that shows `node` after it is selected in `ne`: one already on it,
+    else one in the editor's link group, else any unpinned one."""
+    panes = _current_tabs(hou.paneTabType.Parm)
+    for pp in panes:
+        if pp.currentNode() == node:
+            return pp
+    for pp in panes:
+        if ne.linkGroup() != hou.paneLinkType.Pinned and pp.linkGroup() == ne.linkGroup():
+            return pp
+    for pp in panes:
+        if not pp.isPin():
+            return pp
+    return None
+
+
+def op_click_node(args):
+    """Glide to a node and click it (double=True dives into it), found by path - no screenshot.
+    Switches or pans a Network Editor first when the node isn't on screen."""
+    node = hou.node(args["path"])
+    if node is None:
+        raise ValueError("no node %r" % args["path"])
+    ne = _editor_for(node)
+    p = _node_point(ne, node)
+    res = op_click({"x": p.x(), "y": p.y(), "double": args.get("double", False)})
+    pp = _parm_pane_for(ne, node)
+    r = _pane_rect(pp) if pp is not None else None
+    return {"node": node.path(), "clicked": res["clicked"], "network_editor": ne.name(),
+            "parm_pane": pp.name() if pp is not None else None,
+            "parm_pane_rect": [r.x(), r.y(), r.width(), r.height()] if r is not None else None}
+
+
+def op_pane_screenshot(args):
+    """Just one pane, cropped (much smaller for Brother to read than the whole window).
+    kind = parm | network | viewer, or pane = a pane tab name. offset + a pixel in this
+    image = the main-window point to click."""
+    kinds = {"parm": hou.paneTabType.Parm, "network": hou.paneTabType.NetworkEditor,
+             "viewer": hou.paneTabType.SceneViewer}
+    if args.get("pane"):
+        tabs = [t for t in hou.ui.paneTabs() if t.name() == args["pane"]]
+    elif args.get("node"):                      # the Parameter pane showing this node
+        node = hou.node(args["node"])
+        tabs = [t for t in _current_tabs(hou.paneTabType.Parm) if t.currentNode() == node]
+    else:
+        tabs = _current_tabs(kinds[args.get("kind", "parm")])
+    if not tabs:
+        raise RuntimeError("no such pane is visible")
+    tab = tabs[int(args.get("index", 0))]
+    r = _pane_rect(tab)
+    full = op_screenshot({})
+    img = QtGui.QImage(full["file"]).copy(r)
+    path = full["file"].replace(".png", "_%s.png" % tab.name())
+    img.save(path, "PNG")
+    return {"file": path, "pane": tab.name(), "type": tab.type().name(),
+            "offset": [r.x(), r.y()], "width": r.width(), "height": r.height(),
+            "shows": tab.currentNode().path() if tab.type() == hou.paneTabType.Parm and tab.currentNode() else None}
+
+
+def op_set_parm_shown(args):
+    """Set a parm through the API - exact, one 'Brother:' undo step - while the cursor shows
+    Plug where: it clicks the node (so its Parameter pane shows it), then glides to the field
+    at (x, y) if Brother knows it (e.g. read from pane_screenshot), else to the pane itself."""
+    node = hou.node(args["path"])
+    if node is None:
+        raise ValueError("no node %r" % args["path"])
+    shown = op_click_node({"path": node.path()})
+    _pump(0.2)
+    if args.get("x") is not None:
+        at = (args["x"], args["y"])
+    elif shown["parm_pane_rect"]:
+        x, y, w, h = shown["parm_pane_rect"]
+        at = (x + min(w * 0.3, 220), y + 70)
+    else:
+        at = None
+    if at:
+        ov = _glide(at)
+        ov.ripples.append((QtCore.QPointF(*at), time.time()))
+    import sys
+    res = sys.modules["brother_link"].op_set_parm(args)
+    _pump(0.3)
+    res.update({"parm_pane": shown["parm_pane"], "pointed_at": list(at) if at else None})
+    return res
+
+
 OPS = {"screenshot": op_screenshot, "pointer": op_pointer, "click": op_click, "type": op_type,
-       "key": op_key, "cursor_hide": op_cursor_hide, "create_node": op_create_node}
+       "key": op_key, "cursor_hide": op_cursor_hide, "create_node": op_create_node,
+       "click_node": op_click_node, "pane_screenshot": op_pane_screenshot,
+       "set_parm_shown": op_set_parm_shown}

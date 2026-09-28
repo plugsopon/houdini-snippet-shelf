@@ -275,6 +275,38 @@ def houdini_create_node(type: str, x: float, y: float, name: str | None = None,
 
 
 @mcp.tool()
+def houdini_click_node(path: str, double: bool = False) -> str:
+    """Brother's cursor glides to a node found BY PATH (no screenshot needed) and clicks it;
+    double=True dives inside. Switches/pans a Network Editor if the node isn't on screen.
+    Returns which Parameter pane now shows the node and that pane's rect."""
+    return _run("click_node", {"path": path, "double": double})
+
+
+@mcp.tool()
+def houdini_pane_screenshot(kind: str = "parm", pane: str | None = None,
+                            node: str | None = None) -> list:
+    """ONE pane, cropped - far smaller to read than the whole window. kind = parm | network |
+    viewer; or pane = a pane tab name; or node = the Parameter pane showing that node.
+    Click point = offset + pixel in this image."""
+    res = json.loads(_run("pane_screenshot", {"kind": kind, "pane": pane, "node": node}))
+    with open(res["file"], "rb") as fh:
+        data = fh.read()
+    return ["%s %s, offset %s (add it to a pixel here to get the click point)" %
+            (res["type"], res["pane"], res["offset"]), Image(data=data, format="png")]
+
+
+@mcp.tool()
+def houdini_set_parm_shown(path: str, parm: str, value: float | int | str | list | None = None,
+                           expression: str | None = None, x: float | None = None,
+                           y: float | None = None) -> str:
+    """Like houdini_set_parm (exact, one undo step) but visible: the cursor clicks the node so
+    its Parameter pane shows it, then points at the field (x, y from houdini_pane_screenshot)
+    or at the pane, while the value changes."""
+    return _run("set_parm_shown", {"path": path, "parm": parm, "value": value,
+                                   "expression": expression, "x": x, "y": y})
+
+
+@mcp.tool()
 def houdini_cursor_hide() -> str:
     """Remove Brother's visible cursor from the Houdini window."""
     return _run("cursor_hide")

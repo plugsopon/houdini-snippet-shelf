@@ -42,6 +42,9 @@ Nothing is running unless you start it.
 | `houdini_screenshot` | the whole Houdini window; its pixels are the click coordinates |
 | `houdini_pointer`, `houdini_click`, `houdini_type`, `houdini_key`, `houdini_cursor_hide` | Brother's own pink cursor: glides, clicks, types into fields (GUI only) |
 | `houdini_create_node` | cursor glides to a spot in a Network Editor, clicks, and the node appears right under it (optional name + input) - one `Brother:` undo step |
+| `houdini_click_node` | cursor finds a node BY PATH (no screenshot) - switches/pans a Network Editor if needed - and clicks it; `double` dives in. Returns the Parameter pane that now shows it |
+| `houdini_pane_screenshot` | ONE pane cropped (parm / network / viewer, or the pane showing a node) - a fraction of the whole-window image; `offset` + pixel = click point |
+| `houdini_set_parm_shown` | exact API set (one undo step) while the cursor clicks the node and points at the field (x,y from a pane crop) or at its pane |
 
 ## Safety
 
@@ -76,3 +79,12 @@ Nothing is running unless you start it.
   main window is one OpenGL surface (panes are not Qt widgets), so the pane is located with
   `NetworkEditor.qtScreenGeometry()`; its drawing area is the bottom `screenBounds()` part,
   counted from the bottom-left.
+
+### Where the cursor gets its coordinates
+
+- **Nodes: from the API.** `qtScreenGeometry()` gives each pane's rect; a Network Editor's `visibleBounds()` maps a node
+  position to a pixel. Compute it from `visibleBounds` yourself - `posToScreen()` keeps answering for the OLD view until
+  Houdini repaints, so right after a pan it pointed 170px off and the click landed on the timeline (moved the frame).
+- **Parameter pane fields: from a picture.** Houdini draws them itself on its one OpenGL surface; neither Qt nor `hou` can
+  say where a field is. A Parm pane that shares a Network Editor's link group shows what is selected there, so after
+  `click_node` Brother knows WHICH pane to crop (`pane_screenshot node=...`). A scrolled-away field still needs scrolling.
