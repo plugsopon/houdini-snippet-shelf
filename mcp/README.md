@@ -96,3 +96,16 @@ Nothing is running unless you start it.
 - **Desktop `AI_Control`** (2026-09-28): Scene View | Network Editor | Parameters full height, the editor and the
   Parameters pane in link Group1. Made with `desk add` + `Pane.splitHorizontally()`; saved only when Plug
   uses Desktop > Save Current Desktop (there is no API for that).
+
+### AI menu + AI Settings (2026-09-28)
+
+- `mcp/houdini/MainMenuCommon.xml` adds an **AI** menu after Help: *AI Settings...*, Connect /
+  Disconnect Brother, Hide Brother's cursor. `install_menu.py` copies it into the Houdini pref
+  folder (refuses to overwrite a different file). **Houdini reads menu files at start-up** -
+  `hou.ui.updateMainMenuBar()` did not pick up a new top-level menu; restart once.
+- *AI Settings...* (`brother_ui.py`) is a frameless dark panel over the main window: 7 cursor
+  styles with live previews (glitch pixel x3, smooth x3, presenter dot), glitch Off/Calm/Wild,
+  size, name tag on/off + its text, click ripples, and the link status with Connect/Disconnect.
+  Changes apply to the live cursor at once and persist in `~/.houdini_brother/cursor.json`.
+- The panel is its own top-level window, so Brother's cursor cannot click inside it
+  (`_target` only searches Houdini's main window).

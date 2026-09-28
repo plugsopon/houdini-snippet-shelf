@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Brother's "AI" menu on Houdini's main menu bar (after Help).
+     install_menu.py copies this file into $HOUDINI_USER_PREF_DIR; Houdini merges it with its
+     own MainMenuCommon.xml. -->
+<mainMenu>
+  <menuBar>
+    <subMenu id="brother_ai_menu">
+      <label>AI</label>
+      <insertAfter>help_menu</insertAfter>
+
+      <scriptItem id="brother_ai_settings">
+        <label>AI Settings...</label>
+        <scriptCode><![CDATA[
+import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_ui
+brother_ui.show_settings()
+]]></scriptCode>
+      </scriptItem>
+
+      <separatorItem/>
+
+      <scriptItem id="brother_ai_connect">
+        <label>Connect Brother to this session</label>
+        <scriptCode><![CDATA[
+import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_link
+brother_link.start()
+]]></scriptCode>
+      </scriptItem>
+
+      <scriptItem id="brother_ai_disconnect">
+        <label>Disconnect Brother</label>
+        <scriptCode><![CDATA[
+import sys
+if "brother_link" in sys.modules:
+    sys.modules["brother_link"].stop()
+]]></scriptCode>
+      </scriptItem>
+
+      <scriptItem id="brother_ai_hide_cursor">
+        <label>Hide Brother's cursor</label>
+        <scriptCode><![CDATA[
+import sys
+if "brother_cursor" in sys.modules:
+    sys.modules["brother_cursor"].remove()
+]]></scriptCode>
+      </scriptItem>
+    </subMenu>
+  </menuBar>
+</mainMenu>

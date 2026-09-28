@@ -19,15 +19,133 @@ WHITE = QtGui.QColor(255, 255, 255)
 BLACK = QtGui.QColor(0, 0, 0)
 RED = QtGui.QColor(255, 30, 50)
 CYAN = QtGui.QColor(0, 235, 255)
-# The classic pixel arrow (B = black edge, W = white fill), drawn as a glitch: a red copy
-# shifted left and a cyan copy shifted right/down behind it (chromatic aberration), and a few
-# rows that jump sideways now and then.
+PINK = QtGui.QColor(243, 34, 133)
+# The classic pixel arrow (B = edge, W = fill), used by the pixel styles.
 ARROW = ("B..........", "BB.........", "BWB........", "BWWB.......", "BWWWB......",
          "BWWWWB.....", "BWWWWWB....", "BWWWWWWB...", "BWWWWWWWB..", "BWWWWWWWWB.",
          "BWWWWWWWWWB", "BWWWWWWBBBB", "BWWWBWWB...", "BWWBBWWB...", "BWB..BWWB..",
          "BB...BWWB..", "B.....BWWB.", "......BWWB.", ".......BB..")
-PX = 2                                   # screen pixels per arrow pixel
-FILL, EDGE = BLACK, WHITE               # black arrow; the white edge keeps it readable on Houdini's dark UI
+SMOOTH = ((0, 0), (0, 22), (6, 17), (10, 26), (14, 24), (10, 15), (17, 15))
+
+# ----------------------------------------------------------------------------- settings
+# Chosen in AI > AI Settings (brother_ui) and kept in ~/.houdini_brother/cursor.json.
+STYLES = {                     # name: (label, kind, fill, edge)
+    "glitch_dark":  ("Glitch - black, white edge", "pixel",  BLACK, WHITE),
+    "glitch_light": ("Glitch - white, black edge", "pixel",  WHITE, BLACK),
+    "glitch_black": ("Glitch - all black",         "pixel",  BLACK, BLACK),
+    "smooth_black": ("Smooth - black, white glow", "smooth", BLACK, BLACK),
+    "smooth_white": ("Smooth - white, white glow", "smooth", WHITE, QtGui.QColor(30, 30, 34)),
+    "smooth_pink":  ("Smooth - pink",              "smooth", PINK, WHITE),
+    "dot":          ("Presenter dot",              "dot",    PINK, WHITE),
+}
+DEFAULTS = {"style": "glitch_dark", "glitch": "calm", "show_label": True, "label": "Brother",
+            "scale": 2, "ripples": True}
+SETTINGS_FILE = os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"),
+                             ".houdini_brother", "cursor.json")
+
+
+def load_settings():
+    s = dict(DEFAULTS)
+    try:
+        import json
+        with open(SETTINGS_FILE, encoding="utf8") as fh:
+            s.update({k: v for k, v in json.load(fh).items() if k in DEFAULTS})
+    except (OSError, ValueError):
+        pass
+    if s["style"] not in STYLES:
+        s["style"] = DEFAULTS["style"]
+    return s
+
+
+def save_settings(s):
+    import json
+    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+    with open(SETTINGS_FILE, "w", encoding="utf8") as fh:
+        json.dump({k: s[k] for k in DEFAULTS}, fh, indent=1)
+    SETTINGS.clear(); SETTINGS.update(s)
+    w = _ov.get("w")
+    if w is not None:
+        try:
+            w.update()
+        except RuntimeError:
+            pass
+
+
+SETTINGS = load_settings()
+
+
+def paint_cursor(p, x, y, s=None, glitch=None, split=1):
+    """Draw the cursor with its tip at (x, y). Shared by the overlay and the settings preview."""
+    s = s or SETTINGS
+    _, kind, fill, edge = STYLES[s["style"]]
+    glitch = glitch or {}
+    px = max(1, int(s["scale"]))
+    x, y = round(x), round(y)
+    p.save()
+    if kind == "pixel":
+        p.setRenderHint(QtGui.QPainter.Antialiasing, False)                 # crisp pixels
+        p.setPen(QtCore.Qt.NoPen)
+
+        def arrow(dx, dy, color_for):
+            for r, row in enumerate(ARROW):
+                gx = glitch.get(r, 0)
+                for c, ch in enumerate(row):
+                    col = color_for(ch)
+                    if col is not None:
+                        p.fillRect(x + dx + (c + gx) * px, y + dy + r * px, px, px, col)
+
+        if s["glitch"] != "off":
+            arrow(-px * split, 0, lambda ch: RED if ch != "." else None)    # red ghost, left
+            arrow(px * split, px * split, lambda ch: CYAN if ch != "." else None)   # cyan, right/down
+        arrow(0, 0, lambda ch: {"B": edge, "W": fill}.get(ch))
+        for r, gx in glitch.items():                                        # torn scanline dashes
+            if abs(gx) >= 3:
+                p.fillRect(x - 8 * px, y + r * px, 5 * px, 1, WHITE)
+        tag_at = QtCore.QPointF(x + 12 * px, y + 20 * px)
+    elif kind == "smooth":
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        k = px / 2.0 * 1.2
+        poly = QtGui.QPolygonF([QtCore.QPointF(x + dx * k, y + dy * k) for dx, dy in SMOOTH])
+        p.setBrush(QtCore.Qt.NoBrush)
+        for width, alpha in ((14, 0.06), (10, 0.10), (7, 0.16), (4.5, 0.26)):  # white glow
+            g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
+            p.setPen(QtGui.QPen(g, width * k, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap, QtCore.Qt.RoundJoin))
+            p.drawPolygon(poly)
+        p.setPen(QtGui.QPen(edge, 1.2)); p.setBrush(fill)
+        p.drawPolygon(poly)
+        tag_at = QtCore.QPointF(x + 16 * k, y + 24 * k)
+    else:                                                                    # presenter dot
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        r = 5 * px
+        x, y = x + r, y + r                                              # tip = top-left of the dot
+        for grow, alpha in ((10, 0.08), (6, 0.16), (3, 0.3)):
+            g = QtGui.QColor(fill); g.setAlphaF(alpha)
+            p.setPen(QtCore.Qt.NoPen); p.setBrush(g)
+            p.drawEllipse(QtCore.QPointF(x, y), r + grow, r + grow)
+        p.setPen(QtGui.QPen(edge, 1.5)); p.setBrush(fill)
+        p.drawEllipse(QtCore.QPointF(x, y), r, r)
+        tag_at = QtCore.QPointF(x + r + 6, y + r + 2)
+    text = str(s["label"]).strip()
+    if s["show_label"] and text:                                            # name tag
+        f = p.font(); f.setPointSize(8); f.setBold(True); p.setFont(f)
+        tag = QtCore.QRectF(tag_at.x(), tag_at.y(), 8 + 7 * len(text), 16)
+        p.setPen(QtCore.Qt.NoPen)
+        if kind == "pixel":
+            p.fillRect(tag, BLACK)
+            k2 = split if s["glitch"] != "off" else 0
+            if k2:
+                p.setPen(RED); p.drawText(tag.translated(-k2, 0), QtCore.Qt.AlignCenter, text)
+                p.setPen(CYAN); p.drawText(tag.translated(k2, 0), QtCore.Qt.AlignCenter, text)
+            p.setPen(WHITE)
+        else:
+            bg = fill if kind == "dot" else (BLACK if fill.lightness() < 128 else WHITE)
+            p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            p.setBrush(bg); p.drawRoundedRect(tag, 4, 4)
+            p.setPen(WHITE if bg.lightness() < 160 else BLACK)
+        p.drawText(tag, QtCore.Qt.AlignCenter, text)
+    p.restore()
+
+
 _ov = {"w": None, "last": None}      # last = widget Brother last clicked
 
 
@@ -51,7 +169,6 @@ class _Overlay(QtWidgets.QWidget):
         self.main = main
         self.pos_ = QtCore.QPointF(main.width() * 0.5, main.height() * 0.5)
         self.ripples = []            # [(point, start_time)]
-        self.label = "Brother"
         self.last_active = time.time()
         self.last_move = 0.0
         self.glitch, self.split = {}, 1
@@ -77,7 +194,9 @@ class _Overlay(QtWidgets.QWidget):
         now = time.time()
         import random
         moving = now - self.last_move < 0.15
-        if random.random() < (0.55 if moving else 0.12):         # a new glitch: 1-3 rows jump
+        amount = SETTINGS["glitch"] if STYLES[SETTINGS["style"]][1] == "pixel" else "off"
+        rate = {"off": 0.0, "calm": 0.55 if moving else 0.12, "wild": 0.9 if moving else 0.4}[amount]
+        if random.random() < rate:                               # a new glitch: 1-3 rows jump
             self.glitch = {random.randrange(len(ARROW)): random.choice((-3, -2, 2, 3, 4))
                            for _ in range(random.randint(1, 3))}
             self.split = random.choice((1, 1, 2, 3)) if moving else random.choice((1, 1, 1, 2))
@@ -95,37 +214,13 @@ class _Overlay(QtWidgets.QWidget):
         p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         now = time.time()
-        for pt, t0 in self.ripples:                                        # click ripples
+        for pt, t0 in (self.ripples if SETTINGS["ripples"] else ()):        # click ripples
             k = (now - t0) / 0.6
             c = QtGui.QColor(WHITE); c.setAlphaF(max(0.0, 0.8 * (1 - k)))
             p.setPen(QtGui.QPen(c, 3)); p.setBrush(QtCore.Qt.NoBrush)
             r = 6 + 26 * k
             p.drawEllipse(pt, r, r)
-        x, y = round(self.pos_.x()), round(self.pos_.y())                     # the arrow
-        p.setRenderHint(QtGui.QPainter.Antialiasing, False)                 # crisp pixels
-        p.setPen(QtCore.Qt.NoPen)
-
-        def arrow(dx, dy, fill_for):
-            for r, row in enumerate(ARROW):
-                gx = self.glitch.get(r, 0)
-                for c, ch in enumerate(row):
-                    col = fill_for(ch)
-                    if col is not None:
-                        p.fillRect(x + dx + (c + gx) * PX, y + dy + r * PX, PX, PX, col)
-
-        k = self.split
-        arrow(-PX * k, 0, lambda ch: RED if ch != "." else None)            # red ghost, left
-        arrow(PX * k, PX * k, lambda ch: CYAN if ch != "." else None)       # cyan ghost, right/down
-        arrow(0, 0, lambda ch: {"B": EDGE, "W": FILL}.get(ch))
-        for r, gx in self.glitch.items():                                   # torn scanline dashes
-            if abs(gx) >= 3:
-                p.fillRect(x - 8 * PX, y + r * PX, 5 * PX, 1, WHITE)
-        f = p.font(); f.setPointSize(8); f.setBold(True); p.setFont(f)      # name tag
-        tag = QtCore.QRectF(x + 12 * PX, y + 20 * PX, 8 + 7 * len(self.label), 16)
-        p.fillRect(tag, BLACK)
-        p.setPen(RED); p.drawText(tag.translated(-k, 0), QtCore.Qt.AlignCenter, self.label)
-        p.setPen(CYAN); p.drawText(tag.translated(k, 0), QtCore.Qt.AlignCenter, self.label)
-        p.setPen(WHITE); p.drawText(tag, QtCore.Qt.AlignCenter, self.label)
+        paint_cursor(p, self.pos_.x(), self.pos_.y(), SETTINGS, self.glitch, self.split)
 
 
 def _main():
