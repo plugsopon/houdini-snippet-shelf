@@ -55,7 +55,17 @@ class _Preview(QtWidgets.QWidget):
         self.update()
 
     def paintEvent(self, _):
+        # guarded: a Python error while a QPainter is open crashes all of Houdini (signal 11)
         p = QtGui.QPainter(self)
+        try:
+            self._paint(p)
+        except Exception as e:
+            print("%s paint error: %s" % (type(self).__name__, e))
+        finally:
+            if p.isActive():
+                p.end()
+
+    def _paint(self, p):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         p.setPen(QtCore.Qt.NoPen); p.setBrush(self.bg)
         p.drawRoundedRect(QtCore.QRectF(self.rect()), 8, 8)

@@ -208,3 +208,21 @@ A three-part review (chat bugs, Houdini-side bugs, gaps against Claude Code) led
   parallel subagents.
 - The panel's corners were square on the left: the sidebar painted a square background over the
   panel's rounded border. The layout is now inset 1px and the sidebar has its own left radii.
+
+## Round 3 — the Claude-app composer (2026-09-29)
+
+- A composer box with image thumbnails inside, a round send button, and a project + git branch
+  strip above it. Under it: **+** (files/photos Ctrl+U, folder, Houdini viewport, selected
+  nodes, slash commands, Connectors ›, Plugins ›), the **mode** menu (Auto/Manual/Accept
+  edits/Plan/Bypass, keys 1-5), the **model** menu (families + More models), an **Effort**
+  slider (Faster↔Smarter, only the levels the model supports) and a **context ring**.
+  `PopupMenu`, `DotSlider`, `EffortPopup`, `ContextRing` and `Thumb` live in brother_chat.py.
+- The chat runs the **Claude desktop app's own CLI** (newest
+  `%LOCALAPPDATA%\Packages\Claude_*\LocalCache\Roaming\Claude\claude-code\<ver>\claude.exe`;
+  the app is MSIX, so a process outside the package, like Houdini, can't see the plain `%APPDATA%`
+  path). The npm CLI (2.1.226) was too old for Opus 5.5 ("requires 2.1.280"). The npm CLI is the
+  fallback.
+- **Crash guard.** A Python exception inside a PySide `paintEvent` while a QPainter is open
+  segfaults ALL of Houdini (signal 11 in `QPainter::end`). It happened once:
+  `QPen(color, w, cap=...)` is not accepted by this PySide. Every custom paint (chat, cursor
+  overlay, settings) now runs inside try/finally and only prints errors. Keep it that way.

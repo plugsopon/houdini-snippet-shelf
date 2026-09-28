@@ -480,7 +480,17 @@ class _Overlay(QtWidgets.QWidget):
         self.update()
 
     def paintEvent(self, _):
+        # guarded: a Python error while a QPainter is open crashes all of Houdini (signal 11)
         p = QtGui.QPainter(self)
+        try:
+            self._paint(p)
+        except Exception as e:
+            print("%s paint error: %s" % (type(self).__name__, e))
+        finally:
+            if p.isActive():
+                p.end()
+
+    def _paint(self, p):
         p.setCompositionMode(QtGui.QPainter.CompositionMode_Source)       # wipe the last frame: no trails
         p.fillRect(self.rect(), QtCore.Qt.transparent)
         p.setCompositionMode(QtGui.QPainter.CompositionMode_SourceOver)

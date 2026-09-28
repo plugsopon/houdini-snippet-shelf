@@ -29,16 +29,48 @@ from PySide6 import QtCore, QtGui, QtWidgets
 REPO = r"P:\Project\Houdini Snippet Shelf"
 MCP_CONFIG = os.path.join(REPO, ".mcp.json")
 MODELS = (("Default", None), ("Opus", "opus"), ("Sonnet", "sonnet"), ("Haiku", "haiku"))
-MODES = (("Ask first", "default"), ("Accept edits", "acceptEdits"), ("Plan", "plan"),
-         ("Bypass", "bypassPermissions"))
+MODES = (("Manual", "default"), ("Accept edits", "acceptEdits"), ("Plan", "plan"),
+         ("Bypass permissions", "bypassPermissions"))
+# the mode picker, same order, words and shortcuts as the Claude app
+MODE_ROWS = (("auto", "Auto", "Claude handles permission decisions", "Recommended"),
+             ("default", "Manual", "Always ask before making changes", None),
+             ("acceptEdits", "Accept edits", "Automatically accept all file edits", None),
+             ("plan", "Plan", "Create a plan before making changes", None),
+             ("bypassPermissions", "Bypass permissions", "Accepts all permissions", None))
+MODEL_ORDER = ("opus", "fable", "sonnet", "haiku")
 LOOK_TOOLS = ("sessions", "use_session", "scene", "network", "node", "problems", "geometry",
               "attrib", "compare", "viewport", "screenshot", "pane_screenshot")
 _open = {"w": None}
 
 
 # ============================================================================ CLI plumbing
+def _desktop_cli():
+    """The CLI the Claude desktop app keeps up to date itself (%APPDATA%/Claude/claude-code/<ver>/).
+    It is usually newer than the npm install - Opus 5.5 needs >= 2.1.280 - and it is what the Claude
+    app itself runs, so its model list matches the app's."""
+    # the app is an MSIX package: its %APPDATA% is virtualised under LOCALAPPDATA/Packages, and
+    # only processes inside the package see the plain path - Houdini sees the real one
+    roots = [os.path.join(os.environ.get("APPDATA", ""), "Claude", "claude-code")]
+    roots += glob.glob(os.path.join(os.environ.get("LOCALAPPDATA", ""), "Packages", "Claude_*",
+                                    "LocalCache", "Roaming", "Claude", "claude-code"))
+    best = None
+    for d in [d for r in roots for d in glob.glob(os.path.join(r, "*"))]:
+        exe = os.path.join(d, "claude.exe")
+        try:
+            ver = tuple(int(x) for x in os.path.basename(d).split("."))
+        except ValueError:
+            continue
+        if os.path.exists(exe) and (best is None or ver > best[0]):
+            best = (ver, exe)
+    return best[1] if best else None
+
+
 def claude_exe():
-    """The real claude.exe behind the npm shim (list args, no shell - a prompt passes verbatim)."""
+    """The newest real claude.exe: the desktop app's copy, else the one behind the npm shim
+    (list args, no shell - a prompt passes verbatim)."""
+    exe = _desktop_cli()
+    if exe:
+        return exe
     which = shutil.which("claude")
     if which:
         exe = os.path.join(os.path.dirname(which), "node_modules", "@anthropic-ai", "claude-code",
@@ -377,8 +409,16 @@ QListWidget { background: transparent; border: none; color: #c8c8d0; font-size: 
 QListWidget::item { padding: 7px 8px; border-radius: 6px; }
 QListWidget::item:selected { background: #26262e; color: #fff; }
 QListWidget::item:hover { background: #1c1c22; }
-QPlainTextEdit#composer { background: #0d0d10; color: #fff; border: 1px solid #36363e; border-radius: 8px;
-                          padding: 8px; font-size: 13px; }
+QPlainTextEdit#composer { background: transparent; color: #fff; border: none; padding: 2px; font-size: 13px; }
+QFrame#composerBox { background: #1b1b20; border: 1px solid #34343c; border-radius: 12px; }
+QFrame#ctxStrip { background: #17171b; border: 1px solid #2a2a31; border-radius: 10px; }
+QPushButton#bar { background: transparent; border: none; color: #c8c8d0; padding: 4px 8px; border-radius: 6px; font-size: 12px; }
+QPushButton#bar:hover { background: #26262e; color: #fff; }
+QPushButton#round { background: #2a2a31; color: #e6e6ea; border: none; border-radius: 14px; font-size: 14px; }
+QPushButton#round:hover { background: #3a3a44; }
+QPushButton#send { background: #ffffff; color: #000; border: none; border-radius: 14px; font-size: 14px; font-weight: 700; }
+QPushButton#send:disabled { background: #3a3a42; color: #77777f; }
+QPushButton#stopr { background: #ffffff; color: #000; border: none; border-radius: 14px; font-size: 11px; }
 QScrollArea { background: transparent; border: none; }
 QTextBrowser { background: transparent; border: none; color: #e4e4ea; font-size: 13px; }
 QFrame#user { background: #22222a; border-radius: 10px; }
@@ -683,7 +723,7 @@ class Composer(QtWidgets.QPlainTextEdit):
         super().__init__(parent)
         self.setObjectName("composer")
         self.setPlaceholderText("Ask Brother...   Enter to send, Shift+Enter for a new line, / for commands")
-        self.setFixedHeight(84)
+        self.setMinimumHeight(44); self.setMaximumHeight(160)
         self.images = []                                        # [(media_type, base64)]
 
     def keyPressEvent(self, e):
@@ -721,6 +761,7 @@ class Convo(QtCore.QObject):
         super().__init__(panel)
         self.fork = fork
         self.effort = effort
+        self.init_info = None
         self.bubbles = []                 # user bubbles still waiting for their uuid (rewind point)
         self.streams = {}                 # parent_tool_use_id -> {"text","think","tool"}: one per agent
         self.panel = panel
@@ -922,6 +963,7 @@ class Convo(QtCore.QObject):
             self.mode = o["permissionMode"]           # plan approved, EnterPlanMode, ...: the truth
             self.panel.convo_changed(self)
         if st == "init":
+            self.init_info = o
             self.sid = o.get("session_id") or self.sid
             if self.fork:                              # the fork now has its own id - a normal session
                 self.fork = False
@@ -1130,6 +1172,296 @@ class Convo(QtCore.QObject):
         self.panel.convo_changed(self)
 
 
+
+POPUP_CSS = """
+QFrame#pop { background: #232328; border: 1px solid #3a3a42; border-radius: 12px; }
+QLabel { color: #e8e8ec; font-size: 13px; background: transparent; }
+QLabel#hdr { color: #8a8a94; font-size: 12px; }
+QLabel#desc { color: #8a8a94; font-size: 12px; }
+QLabel#key { color: #8a8a94; font-size: 12px; }
+QLabel#check { color: #6aa9ff; font-size: 13px; }
+QLabel#badge { background: #34343c; color: #c8c8d0; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+QWidget#row { border-radius: 8px; }
+QWidget#row:hover { background: #2e2e36; }
+QFrame#sep { background: #34343c; max-height: 1px; min-height: 1px; }
+"""
+
+
+def _safe_paint(widget, fn):
+    """Paint with a guard. A Python exception while a QPainter is open takes all of Houdini down
+    with signal 11 (it happened: a bad QPen keyword in the context ring), so the painter is always
+    ended and the error only printed."""
+    p = QtGui.QPainter(widget)
+    try:
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        fn(p)
+    except Exception as e:                      # never let it reach Qt
+        print("brother_chat paint error in %s: %s" % (type(widget).__name__, e))
+    finally:
+        p.end()
+
+
+class _Row(QtWidgets.QWidget):
+    def __init__(self, r, menu):
+        super().__init__()
+        self.setObjectName("row"); self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
+        self.r, self.menu = r, menu
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        lay = QtWidgets.QHBoxLayout(self); lay.setContentsMargins(10, 6, 10, 6); lay.setSpacing(8)
+        if r.get("icon"):
+            ic = QtWidgets.QLabel(r["icon"]); ic.setFixedWidth(16); ic.setObjectName("desc"); lay.addWidget(ic)
+        col = QtWidgets.QVBoxLayout(); col.setSpacing(1); lay.addLayout(col, 1)
+        top = QtWidgets.QHBoxLayout(); top.setSpacing(6); col.addLayout(top)
+        top.addWidget(QtWidgets.QLabel(r["label"]))
+        if r.get("badge"):
+            top.addWidget(QtWidgets.QLabel(r["badge"], objectName="badge"))
+        top.addStretch(1)
+        if r.get("desc"):
+            col.addWidget(QtWidgets.QLabel(r["desc"], objectName="desc"))
+        if r.get("checked"):
+            lay.addWidget(QtWidgets.QLabel("✓", objectName="check"))
+        if r.get("key"):
+            lay.addWidget(QtWidgets.QLabel(r["key"], objectName="key"))
+        if r.get("sub"):
+            lay.addWidget(QtWidgets.QLabel("›", objectName="key"))
+        if r.get("disabled"):
+            self.setEnabled(False)
+            for w in self.findChildren(QtWidgets.QLabel):
+                w.setStyleSheet("color:#5a5a64;")
+        self.setToolTip(r.get("tip", ""))
+
+    def enterEvent(self, e):
+        if self.r.get("sub"):
+            self.menu.open_sub(self)
+        super().enterEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        self.menu.trigger(self.r, self)
+
+
+class PopupMenu(QtWidgets.QFrame):
+    """The Claude-app style menu: rounded, a small grey header, rows with a description, a check on
+    the current one, a number shortcut, and submenus that open to the side."""
+    def __init__(self, rows, header=None, width=280, parent=None):
+        super().__init__(parent, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.setStyleSheet(POPUP_CSS)
+        self.rows, self.sub = rows, None
+        outer = QtWidgets.QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0)
+        box = QtWidgets.QFrame(objectName="pop"); outer.addWidget(box)
+        lay = QtWidgets.QVBoxLayout(box); lay.setContentsMargins(6, 6, 6, 6); lay.setSpacing(1)
+        if header:
+            h = QtWidgets.QLabel(header, objectName="hdr"); h.setContentsMargins(10, 4, 10, 4); lay.addWidget(h)
+        for r in rows:
+            if r == "-":
+                lay.addWidget(QtWidgets.QFrame(objectName="sep")); continue
+            lay.addWidget(_Row(r, self))
+        self.setFixedWidth(width)
+
+    def show_at(self, anchor, align="left", above=True):
+        self.adjustSize()
+        g = anchor.mapToGlobal(QtCore.QPoint(0, 0))
+        x = g.x() if align == "left" else g.x() + anchor.width() - self.width()
+        y = g.y() - self.height() - 6 if above else g.y() + anchor.height() + 6
+        scr = QtGui.QGuiApplication.screenAt(g)
+        if scr is not None:
+            a = scr.availableGeometry()
+            x = max(a.left() + 4, min(x, a.right() - self.width() - 4))
+            if y < a.top():
+                y = g.y() + anchor.height() + 6
+        self.move(x, y)
+        self.show()
+        self.setFocus()
+
+    def trigger(self, r, row):
+        if r.get("disabled"):
+            return
+        if r.get("sub"):
+            self.open_sub(row); return
+        self.close()
+        if r.get("do"):
+            r["do"]()
+
+    def open_sub(self, row):
+        if self.sub is not None:
+            try:
+                self.sub.close()
+            except RuntimeError:
+                pass
+        rows = row.r["sub"]() if callable(row.r["sub"]) else row.r["sub"]
+        self.sub = PopupMenu(rows or [{"label": "Nothing here", "disabled": True}], width=row.r.get("sub_width", 300))
+        self.sub.adjustSize()
+        g = row.mapToGlobal(QtCore.QPoint(row.width() + 8, -6))
+        self.sub.move(g); self.sub.show()
+
+    def keyPressEvent(self, e):
+        t = e.text()
+        if t.isdigit():
+            for r in self.rows:
+                if r != "-" and r.get("key") == t:
+                    self.trigger(r, None); return
+        if e.key() == QtCore.Qt.Key_Escape:
+            self.close(); return
+        super().keyPressEvent(e)
+
+    def closeEvent(self, e):
+        if self.sub is not None:
+            try:
+                self.sub.close()
+            except RuntimeError:
+                pass
+        super().closeEvent(e)
+
+
+class DotSlider(QtWidgets.QWidget):
+    """Faster <-> Smarter: a dotted track with a white thumb, one stop per effort level."""
+    changed = QtCore.Signal(int)
+
+    def __init__(self, n, value, parent=None):
+        super().__init__(parent)
+        self.n, self.value = max(2, n), value
+        self.setFixedHeight(26); self.setMinimumWidth(190)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+
+    def _x(self, i):
+        pad = 12
+        return pad + (self.width() - 2 * pad) * i / (self.n - 1)
+
+    def paintEvent(self, _):
+        _safe_paint(self, self._paint)
+
+    def _paint(self, p):
+        h = self.height()
+        track = QtCore.QRectF(2, h / 2 - 7, self.width() - 4, 14)
+        p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor("#2c2c33")); p.drawRoundedRect(track, 7, 7)
+        if self.value >= 0:
+            fill = QtCore.QRectF(2, h / 2 - 7, self._x(self.value) + 8, 14)
+            p.setBrush(QtGui.QColor("#3c3c45")); p.drawRoundedRect(fill, 7, 7)
+        p.setBrush(QtGui.QColor("#77777f"))
+        for i in range(self.n):
+            p.drawEllipse(QtCore.QPointF(self._x(i), h / 2), 1.6, 1.6)
+        if self.value >= 0:
+            p.setBrush(QtGui.QColor("#ffffff"))
+            p.drawRoundedRect(QtCore.QRectF(self._x(self.value) - 6, h / 2 - 9, 12, 18), 4, 4)
+
+    def _set_from(self, x):
+        best = min(range(self.n), key=lambda i: abs(self._x(i) - x))
+        if best != self.value:
+            self.value = best; self.update(); self.changed.emit(best)
+
+    def mousePressEvent(self, e):
+        self._set_from(e.position().x())
+
+    def mouseMoveEvent(self, e):
+        if e.buttons() & QtCore.Qt.LeftButton:
+            self._set_from(e.position().x())
+
+
+class EffortPopup(QtWidgets.QFrame):
+    def __init__(self, levels, current, on_pick, parent=None):
+        super().__init__(parent, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
+        self.setStyleSheet(POPUP_CSS)
+        self.levels, self.on_pick = levels, on_pick
+        outer = QtWidgets.QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0)
+        box = QtWidgets.QFrame(objectName="pop"); outer.addWidget(box)
+        lay = QtWidgets.QVBoxLayout(box); lay.setContentsMargins(14, 12, 14, 14); lay.setSpacing(10)
+        top = QtWidgets.QHBoxLayout(); lay.addLayout(top)
+        top.addWidget(QtWidgets.QLabel("Effort", objectName="hdr"))
+        self.name = QtWidgets.QLabel(); top.addWidget(self.name); top.addStretch(1)
+        q = QtWidgets.QLabel("ⓘ", objectName="hdr")
+        q.setToolTip("How long the model thinks before it answers.\nLower is faster; higher is smarter "
+                     "on hard problems and uses more of your plan.")
+        top.addWidget(q)
+        ends = QtWidgets.QHBoxLayout(); lay.addLayout(ends)
+        ends.addWidget(QtWidgets.QLabel("Faster", objectName="desc")); ends.addStretch(1)
+        ends.addWidget(QtWidgets.QLabel("Smarter", objectName="desc"))
+        idx = levels.index(current) if current in levels else -1
+        self.slider = DotSlider(len(levels), idx)
+        self.slider.changed.connect(self._moved)
+        lay.addWidget(self.slider)
+        self._label(idx)
+        self.setFixedWidth(260)
+
+    def _label(self, i):
+        self.name.setText(self.levels[i].capitalize() if i >= 0 else "Default")
+
+    def _moved(self, i):
+        self._label(i)
+        self.on_pick(self.levels[i])
+
+    show_at = PopupMenu.show_at
+
+    def keyPressEvent(self, e):
+        if e.key() in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
+            i = max(0, min(len(self.levels) - 1, self.slider.value + (1 if e.key() == QtCore.Qt.Key_Right else -1)))
+            self.slider.value = i; self.slider.update(); self._moved(i); return
+        if e.key() in (QtCore.Qt.Key_Escape, QtCore.Qt.Key_Return):
+            self.close(); return
+        super().keyPressEvent(e)
+
+
+class ContextRing(QtWidgets.QWidget):
+    """How full the context window is, as a small ring (grey -> amber -> red)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(18, 18)
+        self.pct = None
+
+    def set(self, pct, tip):
+        self.pct = pct; self.setToolTip(tip); self.update()
+
+    def paintEvent(self, _):
+        _safe_paint(self, self._paint)
+
+    def _paint(self, p):
+        r = QtCore.QRectF(2.5, 2.5, 13, 13)
+        p.setPen(QtGui.QPen(QtGui.QColor("#3a3a44"), 2.2)); p.drawEllipse(r)
+        if self.pct:
+            col = "#ff6a7a" if self.pct > 85 else "#ffb84d" if self.pct > 65 else "#5b8cff"
+            pen = QtGui.QPen(QtGui.QColor(col), 2.2); pen.setCapStyle(QtCore.Qt.RoundCap)
+            p.setPen(pen)
+            p.drawArc(r, 90 * 16, -int(360 * 16 * min(100.0, self.pct) / 100.0))
+
+
+class Thumb(QtWidgets.QLabel):
+    """An attached image inside the composer, with an x on hover."""
+    def __init__(self, data, on_remove, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(112, 112)
+        img = QtGui.QImage.fromData(base64.b64decode(data))
+        pm = QtGui.QPixmap.fromImage(img).scaled(112, 112, QtCore.Qt.KeepAspectRatioByExpanding,
+                                                 QtCore.Qt.SmoothTransformation)
+        out = QtGui.QPixmap(112, 112); out.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(out); p.setRenderHint(QtGui.QPainter.Antialiasing)
+        path = QtGui.QPainterPath(); path.addRoundedRect(QtCore.QRectF(0.5, 0.5, 111, 111), 10, 10)
+        p.setClipPath(path)
+        p.drawPixmap((112 - pm.width()) // 2, (112 - pm.height()) // 2, pm)
+        p.setClipping(False); p.setPen(QtGui.QPen(QtGui.QColor("#3a3a44"), 1)); p.drawPath(path); p.end()
+        self.setPixmap(out)
+        self.x = QtWidgets.QPushButton("×", self, objectName="round")
+        self.x.setFixedSize(22, 22); self.x.setStyleSheet("border-radius:11px;font-size:13px;")
+        self.x.move(112 - 26, 4); self.x.hide(); self.x.clicked.connect(on_remove)
+
+    def enterEvent(self, e):
+        self.x.show(); super().enterEvent(e)
+
+    def leaveEvent(self, e):
+        self.x.hide(); super().leaveEvent(e)
+
+
+def _git_branch(cwd):
+    try:
+        import subprocess
+        r = subprocess.run(["git", "-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True,
+                           text=True, timeout=3, creationflags=0x08000000)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -1141,6 +1473,9 @@ class ChatPanel(QtWidgets.QWidget):
         self.cwd = REPO
         self.convos = []                     # every conversation opened in this Houdini
         self.cur = None
+        self.default_model = None            # what a new session starts on: the last one picked
+        self.models = {}                     # model value -> the CLI's description of it
+        self.model_list = []
         self._spin = 0
         self.setStyleSheet(CSS)
         self._build()
@@ -1181,24 +1516,6 @@ class ChatPanel(QtWidgets.QWidget):
         root.addLayout(main, 1)
         head = QtWidgets.QHBoxLayout(); main.addLayout(head)
         self.head_title = QtWidgets.QLabel("New session", objectName="title"); head.addWidget(self.head_title, 1)
-        self.model_box = QtWidgets.QComboBox()
-        for label, v in MODELS:
-            self.model_box.addItem(label, v)
-        self.model_box.currentIndexChanged.connect(self._model_changed)
-        head.addWidget(self.model_box)
-        self.effort_box = QtWidgets.QComboBox()
-        self.effort_box.setToolTip("How hard the model thinks (effort)")
-        self.effort_box.addItem("effort: auto", None)
-        for e in ("low", "medium", "high", "xhigh", "max"):
-            self.effort_box.addItem("effort: " + e, e)
-        self.effort_box.currentIndexChanged.connect(self._effort_changed)
-        head.addWidget(self.effort_box)
-        self.mode_box = QtWidgets.QComboBox()
-        for label, v in MODES:
-            self.mode_box.addItem(label, v)
-        self.mode_box.currentIndexChanged.connect(self._mode_changed)
-        head.addWidget(self.mode_box)
-        self.cost = QtWidgets.QLabel("", objectName="dim"); head.addWidget(self.cost)
         hide = QtWidgets.QPushButton("Hide", objectName="flat"); hide.clicked.connect(self.hide)
         head.addWidget(hide)
 
@@ -1210,23 +1527,55 @@ class ChatPanel(QtWidgets.QWidget):
         self.stack = QtWidgets.QStackedWidget()
         main.addWidget(self.stack, 1)
 
-        self.chips = QtWidgets.QLabel(objectName="dim"); main.addWidget(self.chips); self.chips.hide()
+        # project + branch strip, like "dremzo-web  staging" above the Claude app's composer
+        strip = QtWidgets.QFrame(objectName="ctxStrip"); main.addWidget(strip)
+        sl2 = QtWidgets.QHBoxLayout(strip); sl2.setContentsMargins(12, 6, 12, 6); sl2.setSpacing(10)
+        self.proj_label = QtWidgets.QLabel()
+        self.proj_label.setStyleSheet("color:#9a9aa6;font-family:%s;font-size:12px;" % MONO)
+        sl2.addWidget(self.proj_label); sl2.addStretch(1)
+        self.tasks_label = QtWidgets.QLabel(objectName="dim"); sl2.addWidget(self.tasks_label)
+        self._refresh_project()
+
+        # the composer box: thumbnails on top, text, and the round send button inside
+        box = QtWidgets.QFrame(objectName="composerBox"); main.addWidget(box)
+        bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(12, 10, 10, 8); bl.setSpacing(6)
+        self.thumbs = QtWidgets.QWidget(); self.thumbs_lay = QtWidgets.QHBoxLayout(self.thumbs)
+        self.thumbs_lay.setContentsMargins(0, 0, 0, 0); self.thumbs_lay.setSpacing(8)
+        self.thumbs.hide(); bl.addWidget(self.thumbs)
+        row = QtWidgets.QHBoxLayout(); bl.addLayout(row)
         self.composer = Composer()
         self.composer.submit.connect(self.send)
         self.composer.escape.connect(self.interrupt)
         self.composer.textChanged.connect(self._slash_popup)
-        main.addWidget(self.composer)
-        row = QtWidgets.QHBoxLayout(); main.addLayout(row)
-        for text, fn in (("Attach image", self.attach_image), ("Viewport", self.attach_viewport),
-                         ("Selected nodes", self.attach_selection)):
-            b = QtWidgets.QPushButton(text, objectName="flat"); b.clicked.connect(fn); row.addWidget(b)
-        row.addStretch(1)
-        self.status = QtWidgets.QLabel(objectName="dim"); row.addWidget(self.status)
-        self.stop_btn = QtWidgets.QPushButton("Stop", objectName="stop"); self.stop_btn.clicked.connect(self.interrupt)
-        self.stop_btn.hide(); row.addWidget(self.stop_btn)
-        self.send_btn = QtWidgets.QPushButton("Send", objectName="primary"); self.send_btn.clicked.connect(self.send)
-        row.addWidget(self.send_btn)
-        grip = QtWidgets.QSizeGrip(self); row.addWidget(grip, 0, QtCore.Qt.AlignBottom | QtCore.Qt.AlignRight)
+        self.composer.textChanged.connect(self._fit_composer)
+        self.composer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        row.addWidget(self.composer, 1)
+        QtCore.QTimer.singleShot(0, self._fit_composer)
+        self.send_btn = QtWidgets.QPushButton("↵", objectName="send"); self.send_btn.setFixedSize(28, 28)
+        self.send_btn.setToolTip("Send (Enter)"); self.send_btn.clicked.connect(self.send)
+        row.addWidget(self.send_btn, 0, QtCore.Qt.AlignBottom)
+        self.stop_btn = QtWidgets.QPushButton("■", objectName="stopr"); self.stop_btn.setFixedSize(28, 28)
+        self.stop_btn.setToolTip("Stop (Esc)"); self.stop_btn.clicked.connect(self.interrupt); self.stop_btn.hide()
+        row.addWidget(self.stop_btn, 0, QtCore.Qt.AlignBottom)
+        self.chips = QtWidgets.QLabel(objectName="dim"); self.chips.hide()     # kept for older callers
+
+        # the bar under it: + | mode ............ model | effort | context ring
+        bar = QtWidgets.QHBoxLayout(); bar.setSpacing(2); main.addLayout(bar)
+        self.plus_btn = QtWidgets.QPushButton("+", objectName="bar"); self.plus_btn.setFixedWidth(28)
+        self.plus_btn.setStyleSheet("font-size:16px;"); self.plus_btn.setToolTip("Add files, folders, commands...")
+        self.plus_btn.clicked.connect(self._plus_menu); bar.addWidget(self.plus_btn)
+        self.mode_btn = QtWidgets.QPushButton("Manual", objectName="bar"); self.mode_btn.clicked.connect(self._mode_menu)
+        bar.addWidget(self.mode_btn)
+        bar.addStretch(1)
+        self.status = QtWidgets.QLabel(objectName="dim"); bar.addWidget(self.status)
+        self.model_btn = QtWidgets.QPushButton("Default", objectName="bar"); self.model_btn.clicked.connect(self._model_menu)
+        bar.addWidget(self.model_btn)
+        self.effort_btn = QtWidgets.QPushButton("Default", objectName="bar"); self.effort_btn.clicked.connect(self._effort_menu)
+        self.effort_btn.setToolTip("Effort"); bar.addWidget(self.effort_btn)
+        self.ring = ContextRing(); bar.addSpacing(4); bar.addWidget(self.ring); bar.addSpacing(2)
+        grip = QtWidgets.QSizeGrip(self); bar.addWidget(grip, 0, QtCore.Qt.AlignBottom | QtCore.Qt.AlignRight)
+        self.cost = QtWidgets.QLabel()            # replaced by the ring; kept so nothing old breaks
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+U"), self, activated=self.attach_files)
 
         self.slash = QtWidgets.QListWidget(self)
         self.slash.setWindowFlags(QtCore.Qt.ToolTip)
@@ -1269,7 +1618,7 @@ class ChatPanel(QtWidgets.QWidget):
         for c in self.convos:
             if c.title == "New session" and not c.working and c.feed.count() <= 3 and c.mode == "default":
                 self._show(c); return
-        c = Convo(self, model=self.model_box.currentData())
+        c = Convo(self, model=self.default_model)
         self.convos.append(c)
         c.add_note("New session in %s - Brother can see and drive this Houdini." % self.cwd)
         c.start()
@@ -1280,47 +1629,144 @@ class ChatPanel(QtWidgets.QWidget):
         c = self._convo_for(sid)
         if c is None:                               # first time opened this Houdini: replay + resume
             c = Convo(self, resume=sid, title=item.data(QtCore.Qt.UserRole + 1) or "Session",
-                      model=self.model_box.currentData())
+                      model=self.default_model)
             self.convos.append(c)
             c.load(sid)
             c.start()
         self._show(c)
 
     def set_models(self, models):
-        """The model menu comes from the CLI's own list (initialize), not a hardcoded one."""
-        if not models or getattr(self, "_models_from_cli", False):
+        """The model list comes from the CLI's own answer to initialize, not a hardcoded one."""
+        if not models or self.model_list:
             return
-        self._models_from_cli = True
+        self.model_list = models
         self.models = {(m.get("value") if m.get("value") != "default" else None): m for m in models}
-        cur = self.cur.model if self.cur else None
-        self.model_box.blockSignals(True)
-        self.model_box.clear()
-        for m in models:
-            v = m.get("value")
-            self.model_box.addItem(m.get("displayName") or v, None if v == "default" else v)
-            self.model_box.setItemData(self.model_box.count() - 1, m.get("description") or "", QtCore.Qt.ToolTipRole)
-        if self.model_box.findData(cur) < 0 and cur:
-            self.model_box.addItem(cur, cur)
-        self.model_box.blockSignals(False)
-        self._set_combo(self.model_box, cur)
-        self._sync_effort()
+        if self.cur is not None:
+            self.convo_changed(self.cur)
 
-    def _sync_effort(self):
-        """Only the effort levels the on-screen model supports."""
+    def _model_name(self, value):
+        """'Opus 5.5' - the versioned name, as the Claude app shows it."""
+        m = self.models.get(value)
+        if m:
+            head = (m.get("description") or "").split(" · ")[0].strip()
+            return head or m.get("displayName") or (value or "Default")
+        return {None: "Default"}.get(value, value or "Default")
+
+    def _levels(self):
+        m = self.models.get(self.cur.model if self.cur else None) or {}
+        if m and not m.get("supportsEffort"):
+            return []
+        return m.get("supportedEffortLevels") or ["low", "medium", "high", "xhigh", "max"]
+
+    def _refresh_project(self):
+        br = _git_branch(self.cwd)
+        self.proj_label.setText("%s   %s" % (os.path.basename(self.cwd.rstrip("\\/")), br))
+        self.proj_label.setToolTip(self.cwd)
+
+    # ---------------------------------------------------------------- the bar's menus
+    def _mode_menu(self):
+        if self.cur is None:
+            return
+        rows = []
+        for n, (v, label, desc, badge) in enumerate(MODE_ROWS, 1):
+            rows.append({"label": label, "desc": desc, "badge": badge, "checked": self.cur.mode == v,
+                         "key": str(n), "do": (lambda v=v: self._pick_mode(v))})
+        PopupMenu(rows, header="Mode", width=290, parent=self).show_at(self.mode_btn)
+
+    def _pick_mode(self, v):
+        self.cur.set_mode(v)
+        self.convo_changed(self.cur)       # the real mode shows until the switch is confirmed
+
+    def _model_menu(self):
+        if self.cur is None:
+            return
+        cur = self.cur.model
+        main, more = [], []
+        fam = {}
+        for m in self.model_list or [{"value": v or "default", "displayName": l} for l, v in MODELS]:
+            v = m.get("value"); v = None if v == "default" else v
+            f = (m.get("displayName") or "").split(" ")[0].lower()
+            plain = "(" not in (m.get("displayName") or "")
+            if v is not None and f in MODEL_ORDER and plain and f not in fam:
+                fam[f] = v; main.append(v)
+            else:
+                more.append(v)
+        main.sort(key=lambda v: MODEL_ORDER.index(
+            ((self.models.get(v) or {}).get("displayName") or "").split(" ")[0].lower()))
+        rows = []
+        for n, v in enumerate(main, 1):
+            rows.append({"label": self._model_name(v), "checked": cur == v, "key": str(n),
+                         "tip": (self.models.get(v) or {}).get("description", ""),
+                         "do": (lambda v=v: self._pick_model(v))})
+
+        def more_rows():
+            out = []
+            for v in more:
+                m = self.models.get(v) or {}
+                out.append({"label": m.get("displayName") or self._model_name(v),
+                            "desc": (m.get("description") or "").split(" · ")[0], "checked": cur == v,
+                            "do": (lambda v=v: self._pick_model(v))})
+            return out
+        if more:
+            rows += ["-", {"label": "More models", "sub": more_rows, "sub_width": 280}]
+        PopupMenu(rows, width=220, parent=self).show_at(self.model_btn, align="right")
+
+    def _pick_model(self, v):
+        self.default_model = v
+        self.cur.set_model(v)
+        levels = self._levels()
+        if self.cur.effort and self.cur.effort not in levels:
+            self.cur.effort = None           # the new model can't do that effort level
+        self.convo_changed(self.cur)
+
+    def _effort_menu(self):
+        if self.cur is None or not self._levels():
+            return
+        EffortPopup(self._levels(), self.cur.effort, self._pick_effort, parent=self).show_at(self.effort_btn, align="right")
+
+    def _pick_effort(self, e):
+        self.cur.set_effort(e)
+        self.convo_changed(self.cur)
+
+    def _plus_menu(self):
         c = self.cur
-        m = getattr(self, "models", {}).get(c.model if c else None)
-        levels = m.get("supportedEffortLevels") if m else None
-        ok = bool(m.get("supportsEffort")) if m else True
-        for i in range(1, self.effort_box.count()):
-            v = self.effort_box.itemData(i)
-            item = self.effort_box.model().item(i)
-            item.setEnabled(ok and (levels is None or v in levels))
-        self.effort_box.setEnabled(ok)
-        self._set_combo(self.effort_box, c.effort if c else None)
+        info = (c.init_info if c is not None else None) or {}
+
+        def connectors():
+            rows = []
+            for m in info.get("mcp_servers") or []:
+                st = m.get("status", "")
+                rows.append({"label": m.get("name", "?").replace("plugin:", ""),
+                             "desc": st, "checked": st == "connected", "disabled": st != "connected"})
+            return rows or [{"label": "Send a message first to load them", "disabled": True}]
+
+        def plugins():
+            rows = []
+            for pl in info.get("plugins") or []:
+                name = pl.get("name") if isinstance(pl, dict) else str(pl)
+                rows.append({"label": name, "desc": (pl.get("path", "") if isinstance(pl, dict) else "")[-40:]})
+            return rows or [{"label": "No plugins loaded", "disabled": True}]
+        rows = [{"icon": "📎", "label": "Add files or photos", "key": "Ctrl+U", "do": self.attach_files},
+                {"icon": "🗀", "label": "Add folder", "do": self.attach_folder},
+                {"icon": "▣", "label": "Houdini viewport", "do": self.attach_viewport},
+                {"icon": "◇", "label": "Selected nodes", "do": self.attach_selection},
+                {"icon": "/", "label": "Slash commands", "do": self._open_slash},
+                "-",
+                {"icon": "⧉", "label": "Connectors", "sub": connectors, "sub_width": 300},
+                {"icon": "✦", "label": "Plugins", "sub": plugins, "sub_width": 300}]
+        PopupMenu(rows, width=250, parent=self).show_at(self.plus_btn)
+
+    def _open_slash(self):
+        self.composer.setPlainText("/")
+        self.composer.moveCursor(QtGui.QTextCursor.End)
+        self.composer.setFocus()
+
+    def _fit_composer(self):
+        doc_h = int(self.composer.document().size().height() * self.composer.fontMetrics().lineSpacing()) + 14
+        self.composer.setFixedHeight(max(44, min(160, doc_h)))
 
     def _effort_changed(self):
-        if self.cur is not None:
-            self.cur.set_effort(self.effort_box.currentData())
+        pass
 
     def _history_menu(self, pos):
         it = self.list.itemAt(pos)
@@ -1338,26 +1784,18 @@ class ChatPanel(QtWidgets.QWidget):
             if ok and new.strip():
                 c = self._convo_for(sid)
                 if c is None:
-                    c = Convo(self, resume=sid, title=title, model=self.model_box.currentData())
+                    c = Convo(self, resume=sid, title=title, model=self.default_model)
                     self.convos.append(c); c.load(sid)
                 c.rename(new.strip())
                 self._show(c)
         elif got is fork:
-            c = Convo(self, resume=sid, title="Fork of " + (title or "session"), model=self.model_box.currentData(),
+            c = Convo(self, resume=sid, title="Fork of " + (title or "session"), model=self.default_model,
                       fork=True)
             self.convos.append(c)
             c.load(sid)
             c.add_note("Forked - this is a new session; the original is untouched.", "#9a9aff")
             c.start()
             self._show(c)
-
-    @staticmethod
-    def _set_combo(box, value):
-        i = box.findData(value)
-        if i >= 0 and i != box.currentIndex():
-            box.blockSignals(True)
-            box.setCurrentIndex(i)
-            box.blockSignals(False)
 
     def convo_changed(self, c, finished=False):
         """Any conversation's state moved: refresh the list marks, and the header if it's on screen."""
@@ -1369,26 +1807,25 @@ class ChatPanel(QtWidgets.QWidget):
         if c is not self.cur:
             return
         self.head_title.setText(c.title)
-        # the menus always show the on-screen conversation's REAL model and mode
-        self._set_combo(self.model_box, c.model)
-        self._set_combo(self.mode_box, c.mode)
-        self._sync_effort()
+        # the bar always shows the on-screen conversation's REAL mode, model and effort
+        self.mode_btn.setText(dict((v, l) for v, l, _d, _b in MODE_ROWS).get(c.mode, c.mode))
+        self.model_btn.setText(self._model_name(c.model))
+        levels = self._levels()
+        self.effort_btn.setVisible(bool(levels))
+        self.effort_btn.setText((c.effort or "default").capitalize())
         self.stop_btn.setVisible(c.busy)
-        self.send_btn.setText("Queue" if c.busy else "Send")
+        self.send_btn.setVisible(not c.busy)
         if c.context:
             used, mx = c.context
             pct = 100.0 * used / mx
-            self.cost.setText("context %d%%" % round(pct))
-            self.cost.setStyleSheet("color:%s;font-size:11px;" % ("#ff8a9a" if pct > 85 else "#ffb84d" if pct > 65 else "#80808c"))
-            self.cost.setToolTip("%s of %s tokens in the context window%s" % (
-                _k(used), _k(mx), "\nClaude will compact soon - or type /compact" if pct > 65 else ""))
+            self.ring.set(pct, "Context  %d%%\n%s of %s tokens%s" % (
+                round(pct), _k(used), _k(mx), "\nClaude will compact soon - or type /compact" if pct > 65 else ""))
         else:
-            self.cost.setText("")
-        bits = [c.model or "default model", dict((v, l) for l, v in MODES).get(c.mode, c.mode)]
-        if c.tasks:
-            bits.append("%d background task%s" % (len(c.tasks), "s" if len(c.tasks) > 1 else ""))
-        self.status.setText("   ".join(bits))
-        self.status.setToolTip("\n".join(c.tasks.values()))
+            self.ring.set(None, "Context - after the first reply")
+        self.tasks_label.setText("%d background task%s" % (len(c.tasks), "s" if len(c.tasks) > 1 else "")
+                                 if c.tasks else "")
+        self.tasks_label.setToolTip("\n".join(c.tasks.values()))
+        self.status.setText("")
 
     def rate_limit(self, info):
         """Plan usage from the CLI: warn before the limit, say plainly when it's hit."""
@@ -1475,36 +1912,49 @@ class ChatPanel(QtWidgets.QWidget):
             self.cur.add_note("Stopped.", "#ff8a9a")
             self.convo_changed(self.cur)
 
-    def _model_changed(self):
-        if self.cur is not None:
-            self.cur.set_model(self.model_box.currentData())
-            if self.cur.effort and self.cur.effort not in (
-                    (getattr(self, "models", {}).get(self.cur.model) or {}).get("supportedEffortLevels") or [self.cur.effort]):
-                self.cur.effort = None           # the new model can't do that effort level
-            self.convo_changed(self.cur)
-
-    def _mode_changed(self):
-        if self.cur is not None:
-            self.cur.set_mode(self.mode_box.currentData())
-            self.convo_changed(self.cur)          # shows the real mode until the switch is confirmed
-
     def add_note(self, text, color="#80808c"):
         return self.cur.add_note(text, color)
 
     # ---------------------------------------------------------------- attachments
     def refresh_chips(self):
-        n = len(self.composer.images)
-        self.chips.setText("%d image(s) attached - Backspace in an empty box clears them" % n if n else "")
-        self.chips.setVisible(bool(n))
+        """Attached images as thumbnails inside the composer box."""
+        while self.thumbs_lay.count():
+            w = self.thumbs_lay.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        for n, (_mt, data) in enumerate(self.composer.images):
+            self.thumbs_lay.addWidget(Thumb(data, lambda n=n: self._drop_image(n)))
+        self.thumbs_lay.addStretch(1)
+        self.thumbs.setVisible(bool(self.composer.images))
 
-    def attach_image(self):
-        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Attach images", "", "Images (*.png *.jpg *.jpeg *.webp *.gif)")
+    def _drop_image(self, n):
+        if 0 <= n < len(self.composer.images):
+            del self.composer.images[n]
+        self.refresh_chips()
+
+    def attach_files(self):
+        paths, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "Add files or photos", self.cwd)
         for p in paths:
             ext = os.path.splitext(p)[1].lower().lstrip(".")
-            mt = "image/jpeg" if ext in ("jpg", "jpeg") else "image/%s" % ext
-            with open(p, "rb") as fh:
-                self.composer.images.append((mt, base64.b64encode(fh.read()).decode()))
+            if ext in ("png", "jpg", "jpeg", "webp", "gif"):
+                mt = "image/jpeg" if ext in ("jpg", "jpeg") else "image/%s" % ext
+                with open(p, "rb") as fh:
+                    self.composer.images.append((mt, base64.b64encode(fh.read()).decode()))
+            else:                                # anything else: point Claude at it by path
+                self._mention(p)
         self.refresh_chips()
+
+    attach_image = attach_files
+
+    def attach_folder(self):
+        d = QtWidgets.QFileDialog.getExistingDirectory(self, "Add folder", self.cwd)
+        if d:
+            self._mention(d)
+
+    def _mention(self, path):
+        self.composer.insertPlainText(("" if not self.composer.toPlainText() or self.composer.toPlainText().endswith(" ")
+                                       else " ") + "@" + path.replace("\\", "/") + " ")
+        self.composer.setFocus()
 
     def attach_viewport(self):
         bl = sys.modules.get("brother_link")
