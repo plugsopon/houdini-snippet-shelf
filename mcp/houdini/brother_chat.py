@@ -145,11 +145,11 @@ def load_transcript(cwd, sid):
                     c = msg.get("content")
                     if isinstance(c, str):
                         if not c.startswith("<"):
-                            events.append(("user", c))
+                            events.append(("user", {"text": c, "uuid": o.get("uuid")}))
                     else:
                         for b in c or []:
                             if b.get("type") == "text" and not b.get("text", "").startswith("<"):
-                                events.append(("user", b["text"]))
+                                events.append(("user", {"text": b["text"], "uuid": o.get("uuid")}))
                             elif b.get("type") == "tool_result":
                                 events.append(("tool_result", b))
                 elif o.get("type") == "assistant":
@@ -185,9 +185,12 @@ class ClaudeSession(QtCore.QObject):
     event = QtCore.Signal(dict)
     ended = QtCore.Signal(int, str)
 
-    def __init__(self, cwd, resume=None, model=None, mode="default", parent=None, session_id=None):
+    def __init__(self, cwd, resume=None, model=None, mode="default", parent=None, session_id=None,
+                 effort=None, fork=False):
         super().__init__(parent)
         self.cwd, self.resume, self.model, self.mode = cwd, resume, model, mode
+        self.effort, self.fork = effort, fork
+        self.init = {}                    # the initialize answer: commands, models, ...
         self.session_id = resume or session_id or str(uuid.uuid4())
         self.proc = None
         self.buf = b""
@@ -202,12 +205,19 @@ class ClaudeSession(QtCore.QObject):
             raise RuntimeError("claude CLI not found - install Claude Code (npm i -g @anthropic-ai/claude-code)")
         args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--permission-prompt-tool", "stdio",
+                # echo each user message back with its uuid: the rewind point for that message
+                "--replay-user-messages",
                 # makes Bypass selectable from the mode menu later; it does NOT turn it on
                 "--allow-dangerously-skip-permissions",
                 "--permission-mode", self.mode, "--append-system-prompt", houdini_context()]
-        args += ["--resume", self.resume] if self.resume else ["--session-id", self.session_id]
+        if self.resume and self.fork:
+            args += ["--resume", self.resume, "--fork-session"]
+        else:
+            args += ["--resume", self.resume] if self.resume else ["--session-id", self.session_id]
         if self.model:
             args += ["--model", self.model]
+        if self.effort:
+            args += ["--effort", self.effort]
         if os.path.exists(MCP_CONFIG):
             args += ["--mcp-config", MCP_CONFIG,
                      # looking at the scene never needs a click; changing it still asks
@@ -219,7 +229,9 @@ class ClaudeSession(QtCore.QObject):
         p.setProgram(exe)
         p.setArguments(args)
         p.setWorkingDirectory(self.cwd)
-        p.setProcessEnvironment(claude_env())
+        env = claude_env()
+        env.insert("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")   # what makes rewind possible
+        p.setProcessEnvironment(env)
         p.readyReadStandardOutput.connect(self._read)
         p.readyReadStandardError.connect(self._read_err)
         p.finished.connect(self._finished)
@@ -316,6 +328,8 @@ class ClaudeSession(QtCore.QObject):
                 r = (o.get("response") or {}).get("response") or {}
                 if r.get("commands"):
                     self.commands = r["commands"]
+                if r.get("models"):
+                    self.init = r
             if o.get("type") == "result":
                 self.busy = False
             self.event.emit(o)
@@ -344,7 +358,8 @@ class ClaudeSession(QtCore.QObject):
 # =========================================================================== widgets
 CSS = """
 #panel { background: #141418; border: 1px solid #34343c; border-radius: 12px; }
-#side { background: #101014; border-right: 1px solid #26262c; }
+#side { background: #101014; border-right: 1px solid #26262c;
+        border-top-left-radius: 11px; border-bottom-left-radius: 11px; }
 QLabel { color: #d8d8de; font-size: 12px; }
 QLabel#title { color: #fff; font-size: 15px; font-weight: 700; }
 QLabel#dim { color: #80808c; font-size: 11px; }
@@ -478,6 +493,25 @@ class ToolCard(QtWidgets.QFrame):
                     for t in inp.get("todos", [])]
             self._extra_html("".join(rows))
 
+    def _add_image(self, data):
+        """A screenshot or a Read image: a thumbnail, click for full width."""
+        img = QtGui.QImage.fromData(base64.b64decode(data))
+        if img.isNull():
+            return
+        lab = QtWidgets.QLabel(); lab.setCursor(QtCore.Qt.PointingHandCursor)
+        lab.setToolTip("Click to enlarge / shrink")
+        state = {"big": False}
+
+        def show():
+            w = max(200, self.width() - 30) if state["big"] else 320
+            lab.setPixmap(QtGui.QPixmap.fromImage(img).scaledToWidth(min(w, img.width()), QtCore.Qt.SmoothTransformation))
+
+        def toggle(_e):
+            state["big"] = not state["big"]; show()
+        lab.mousePressEvent = toggle
+        show()
+        self.extra_lay.addWidget(lab); self.extra.show()
+
     def _extra_html(self, html):
         t = QtWidgets.QTextBrowser(); t.setHtml(html)
         t.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
@@ -487,6 +521,10 @@ class ToolCard(QtWidgets.QFrame):
 
     def set_result(self, content, is_error):
         text = _text_of(content) if not isinstance(content, str) else content
+        for b in content if isinstance(content, list) else []:
+            src = b.get("source") if isinstance(b, dict) and b.get("type") == "image" else None
+            if src and src.get("type") == "base64":
+                self._add_image(src.get("data", ""))
         self.result_view.set_text(text[:6000] + ("\n..." if len(text) > 6000 else ""))
         self.result_view.setStyleSheet("color:%s;" % ("#ff9aa6" if is_error else "#9ad0a0"))
         self.result_view.show()
@@ -679,8 +717,12 @@ class Convo(QtCore.QObject):
     """One conversation: its own claude process, feed, model and permission mode. Several can
     run at once; the panel only decides which one is on screen."""
 
-    def __init__(self, panel, resume=None, title="New session", model=None):
+    def __init__(self, panel, resume=None, title="New session", model=None, fork=False, effort=None):
         super().__init__(panel)
+        self.fork = fork
+        self.effort = effort
+        self.bubbles = []                 # user bubbles still waiting for their uuid (rewind point)
+        self.streams = {}                 # parent_tool_use_id -> {"text","think","tool"}: one per agent
         self.panel = panel
         self.title = title
         self.session = None
@@ -738,13 +780,16 @@ class Convo(QtCore.QObject):
                 except (RuntimeError, TypeError):
                     pass
         self.session = ClaudeSession(self.panel.cwd, self.sid if self.has_history else None, self.model,
-                                     self.mode, self, session_id=self.sid)
+                                     self.mode, self, session_id=None if self.fork else self.sid,
+                                     effort=self.effort, fork=self.fork)
         self.session.event.connect(self.on_event)
         self.session.ended.connect(self.on_ended)
         _ensure_link()
         try:
             self.session.start()
-            self.sid = self.session.session_id
+            if not self.fork:
+                self.sid = self.session.session_id
+            # a fork gets its new id from system/init; after that it is a normal session
         except RuntimeError as e:
             self.add_note(str(e), "#ff8a9a")
 
@@ -776,6 +821,22 @@ class Convo(QtCore.QObject):
         else:
             self.mode = mode              # applied at the next launch
 
+    def set_effort(self, effort):
+        self.effort = effort
+        if self.session is not None and self.session.running() and not self.session.parked:
+            self.control(("effort", effort), "apply_flag_settings", settings={"effortLevel": effort})
+
+    def rename(self, title):
+        self.title = title
+        self.control(("rename", title), "rename_session", title=title)
+
+    def rewind(self, bubble):
+        """Put the files Claude edited back the way they were before this message."""
+        if not bubble.uuid:
+            return
+        self.pending_rewind = bubble
+        self.control(("rewind?", bubble.uuid), "rewind_files", user_message_id=bubble.uuid, dry_run=True)
+
     def set_model(self, model):
         self.model = model
         if self.session is not None and self.session.running() and not self.session.parked:
@@ -790,21 +851,34 @@ class Convo(QtCore.QObject):
         l = QtWidgets.QLabel(text); l.setWordWrap(True); l.setStyleSheet("color:%s;font-size:11px;" % color)
         return self._add(l)
 
-    def add_user(self, text, n_images=0):
+    def add_user(self, text, n_images=0, uuid_=None):
         f = QtWidgets.QFrame(objectName="user")
-        lay = QtWidgets.QVBoxLayout(f); lay.setContentsMargins(12, 8, 12, 8)
+        lay = QtWidgets.QVBoxLayout(f); lay.setContentsMargins(12, 8, 12, 4); lay.setSpacing(0)
         lay.addWidget(AutoText(text + (("\n\n*+%d image(s)*" % n_images) if n_images else ""), color="#ffffff"))
-        self.cur_text = None
+        rw = QtWidgets.QPushButton("Rewind files to here", objectName="flat")
+        rw.setToolTip("Undo the file edits Claude made from this message on (the conversation stays)")
+        rw.clicked.connect(lambda: self.rewind(f))
+        lay.addWidget(rw, 0, QtCore.Qt.AlignRight)
+        f.uuid = uuid_
+        f.sent_text = text.strip()
+        f.rewind_btn = rw
+        rw.setVisible(bool(uuid_))
+        if not uuid_:
+            self.bubbles.append(f)
+        self.streams = {}
         return self._add(f)
 
-    def add_text(self, text=""):
-        self.cur_text = self._add(AutoText(text))
-        return self.cur_text
+    def add_text(self, text="", depth=0):
+        t = AutoText(text, color="#b8b8c8" if depth else None)
+        if depth:
+            t.setStyleSheet("color:#b8b8c8;border-left:2px solid #34343e;padding-left:6px;margin-left:%dpx;" % (18 * depth))
+        self.cur_text = self._add(t)
+        return t
 
-    def add_think(self):
+    def add_think(self, depth=0):
         """Thinking, folded to one line like Claude Code; click to read it."""
         f = QtWidgets.QFrame(objectName="think")
-        lay = QtWidgets.QVBoxLayout(f); lay.setContentsMargins(10, 0, 0, 0); lay.setSpacing(2)
+        lay = QtWidgets.QVBoxLayout(f); lay.setContentsMargins(10 + 18 * depth, 0, 0, 0); lay.setSpacing(2)
         b = QtWidgets.QPushButton("Thinking...", objectName="flat")
         b.setStyleSheet("text-align:left;font-style:italic;")
         lay.addWidget(b, 0, QtCore.Qt.AlignLeft)
@@ -824,7 +898,7 @@ class Convo(QtCore.QObject):
     def load(self, sid):
         for kind, v in load_transcript(self.panel.cwd, sid):
             if kind == "user":
-                self.add_user(v)
+                self.add_user(v["text"], uuid_=v.get("uuid"))
             elif kind == "text":
                 self.add_text(v)
             elif kind == "tool_use":
@@ -849,6 +923,12 @@ class Convo(QtCore.QObject):
             self.panel.convo_changed(self)
         if st == "init":
             self.sid = o.get("session_id") or self.sid
+            if self.fork:                              # the fork now has its own id - a normal session
+                self.fork = False
+                self.has_history = True
+                self.rename(self.title)                # else it shows the original's name twice
+            if self.session is not None and self.session.init:
+                self.panel.set_models(self.session.init.get("models") or [])
             self.api_source = o.get("apiKeySource")
             mcp = ", ".join("%s %s" % (m.get("name"), m.get("status")) for m in o.get("mcp_servers") or [])
             line = "claude %s  model %s  %s  mcp: %s" % (
@@ -908,9 +988,32 @@ class Convo(QtCore.QObject):
                 self.add_note("Could not switch to %s: %s" % (what[1], r.get("error")), "#ff8a9a")
             elif what[0] == "model":
                 self.add_note("Could not switch model: %s" % r.get("error"), "#ff8a9a")
+            else:
+                self.add_note("%s failed: %s" % (what[0].rstrip("?"), r.get("error")), "#ff8a9a")
             self.panel.convo_changed(self)             # the menus fall back to the real state
             return
         body = r.get("response") or {}
+        if what[0] == "rewind?":
+            b = getattr(self, "pending_rewind", None)
+            files = body.get("filesChanged") or []
+            if not body.get("canRewind") or not files:
+                self.add_note("Nothing to rewind from that message%s." % (
+                    (" (%s)" % body["error"]) if body.get("error") else ""), "#ffb84d")
+                return
+            names = "\n".join("  " + os.path.basename(f) for f in files[:12])
+            ok = QtWidgets.QMessageBox.question(
+                self.panel, "Rewind files",
+                "Put %d file(s) back the way they were before this message?\n\n%s\n\n+%s / -%s lines. "
+                "The conversation itself stays." % (len(files), names, body.get("insertions", 0), body.get("deletions", 0)))
+            if ok == QtWidgets.QMessageBox.Yes:
+                self.control(("rewind", what[1]), "rewind_files", user_message_id=what[1], dry_run=False)
+            return
+        if what[0] == "rewind":
+            self.add_note("Files rewound to before that message." if body.get("canRewind", True)
+                          else "Rewind failed: %s" % body.get("error"), "#9a9aff")
+            return
+        if what[0] == "rename":
+            self.panel.refresh_sessions()
         if what[0] == "mode":
             self.mode = body.get("mode") or what[1]
         elif what[0] == "context" and body.get("maxTokens"):
@@ -923,6 +1026,8 @@ class Convo(QtCore.QObject):
         if t == "system":
             self._system(o)
         elif t == "control_response":
+            if self.session is not None and self.session.init:
+                self.panel.set_models(self.session.init.get("models") or [])   # the answer to initialize
             self._control_response(o)
         elif t == "control_cancel_request":
             c = self.asks.pop(o.get("request_id"), None)
@@ -932,40 +1037,62 @@ class Convo(QtCore.QObject):
         elif t == "rate_limit_event":
             self.panel.rate_limit(o.get("rate_limit_info") or {})
         elif t == "stream_event":
+            # each agent (main = None, subagents by parent_tool_use_id) streams into its OWN blocks,
+            # so parallel subagents can't write into each other's text
+            st = self.streams.setdefault(o.get("parent_tool_use_id"), {"text": None, "think": None, "tool": None})
             ev = o.get("event") or {}
             et = ev.get("type")
             if et == "content_block_start":
                 cb = ev.get("content_block") or {}
                 if cb.get("type") == "text":
-                    self.add_text("")
+                    st["text"] = self.add_text("", depth)
                 elif cb.get("type") == "thinking":
-                    self.add_think()
+                    st["think"] = self.add_think(depth)
                 elif cb.get("type") == "tool_use":
-                    self.cur_tool = self.add_tool(cb.get("name", "?"), cb.get("id"), depth)
+                    st["tool"] = self.add_tool(cb.get("name", "?"), cb.get("id"), depth)
             elif et == "content_block_delta":
                 d = ev.get("delta") or {}
                 if d.get("type") == "text_delta":
-                    (self.cur_text or self.add_text("")).append_text(d.get("text", ""))
+                    if st["text"] is None:
+                        st["text"] = self.add_text("", depth)
+                    st["text"].append_text(d.get("text", ""))
                 elif d.get("type") == "thinking_delta":
-                    (self.cur_think or self.add_think()).append_text(d.get("thinking", ""))
-                elif d.get("type") == "input_json_delta" and self.cur_tool is not None:
-                    self.cur_tool.add_partial(d.get("partial_json", ""))
+                    if st["think"] is None:
+                        st["think"] = self.add_think(depth)
+                    st["think"].append_text(d.get("thinking", ""))
+                elif d.get("type") == "input_json_delta" and st["tool"] is not None:
+                    st["tool"].add_partial(d.get("partial_json", ""))
             elif et == "message_start":
-                self.cur_think = None
+                st["think"] = None
+                st["text"] = None
         elif t == "assistant":
+            st = self.streams.get(o.get("parent_tool_use_id")) or {}
             for b in (o.get("message") or {}).get("content") or []:
                 if b.get("type") == "tool_use":
                     c = self.cards.get(b.get("id")) or self.add_tool(b.get("name", "?"), b.get("id"), depth)
                     c.set_input(b.get("input"))
-                elif b.get("type") == "text" and self.cur_text is None and b.get("text"):
-                    self.add_text(b["text"])          # no partials came (e.g. a subagent) - show whole
+                elif b.get("type") == "text" and st.get("text") is None and b.get("text"):
+                    self.add_text(b["text"], depth)   # no partials came (e.g. a subagent) - show whole
         elif t == "user":
-            for b in (o.get("message") or {}).get("content") or []:
-                if isinstance(b, dict) and b.get("type") == "tool_result":
-                    c = self.cards.get(b.get("tool_use_id"))
-                    if c:
-                        c.set_result(b.get("content"), b.get("is_error"))
-            self.cur_text = None
+            content = (o.get("message") or {}).get("content") or []
+            results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
+            if o.get("isReplay") and not results and o.get("uuid") and self.bubbles:
+                # our own message echoed back = its rewind point. Match by TEXT: a /model or other
+                # local command is echoed too (<local-command-stdout>...) and must not take the slot
+                txt = _text_of(content if isinstance(content, list) else [{"type": "text", "text": content}]).strip()
+                for f in self.bubbles:
+                    if f.sent_text and f.sent_text == txt:
+                        self.bubbles.remove(f)
+                        f.uuid = o["uuid"]
+                        f.rewind_btn.show()
+                        break
+            for b in results:
+                c = self.cards.get(b.get("tool_use_id"))
+                if c:
+                    c.set_result(b.get("content"), b.get("is_error"))
+            st = self.streams.get(o.get("parent_tool_use_id"))
+            if st:
+                st["text"] = None
         elif t == "control_request":
             req = o.get("request") or {}
             if req.get("subtype") == "can_use_tool":
@@ -990,6 +1117,7 @@ class Convo(QtCore.QObject):
                 self.add_note("done  %.1fs   %s in / %s out" % ((o.get("duration_ms") or 0) / 1000.0,
                                                                _k(tokens), _k(u.get("output_tokens", 0))))
             self.cur_text = self.cur_think = self.cur_tool = None
+            self.streams = {}
             self._expire_asks()
             self.ask_context()
             self.panel.convo_changed(self, finished=True)
@@ -1030,7 +1158,8 @@ class ChatPanel(QtWidgets.QWidget):
     def _build(self):
         outer = QtWidgets.QVBoxLayout(self); outer.setContentsMargins(0, 0, 0, 0)
         panel = QtWidgets.QFrame(objectName="panel"); outer.addWidget(panel)
-        root = QtWidgets.QHBoxLayout(panel); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(0)
+        # 1px inset so children sit inside the panel's rounded border instead of painting over it
+        root = QtWidgets.QHBoxLayout(panel); root.setContentsMargins(1, 1, 1, 1); root.setSpacing(0)
 
         side = QtWidgets.QFrame(objectName="side"); side.setFixedWidth(230); root.addWidget(side)
         sl = QtWidgets.QVBoxLayout(side); sl.setContentsMargins(10, 12, 10, 10); sl.setSpacing(8)
@@ -1039,6 +1168,9 @@ class ChatPanel(QtWidgets.QWidget):
         sl.addWidget(nb)
         sl.addWidget(QtWidgets.QLabel("HISTORY", objectName="dim"))
         self.list = QtWidgets.QListWidget(); self.list.itemClicked.connect(self._pick_session)
+        self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._history_menu)
+        self.list.setToolTip("Right-click a session to rename or fork it")
         self.list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.list.setTextElideMode(QtCore.Qt.ElideRight)
         sl.addWidget(self.list, 1)
@@ -1054,6 +1186,13 @@ class ChatPanel(QtWidgets.QWidget):
             self.model_box.addItem(label, v)
         self.model_box.currentIndexChanged.connect(self._model_changed)
         head.addWidget(self.model_box)
+        self.effort_box = QtWidgets.QComboBox()
+        self.effort_box.setToolTip("How hard the model thinks (effort)")
+        self.effort_box.addItem("effort: auto", None)
+        for e in ("low", "medium", "high", "xhigh", "max"):
+            self.effort_box.addItem("effort: " + e, e)
+        self.effort_box.currentIndexChanged.connect(self._effort_changed)
+        head.addWidget(self.effort_box)
         self.mode_box = QtWidgets.QComboBox()
         for label, v in MODES:
             self.mode_box.addItem(label, v)
@@ -1110,7 +1249,7 @@ class ChatPanel(QtWidgets.QWidget):
     # ---------------------------------------------------------------- conversations
     def _convo_for(self, sid):
         for c in self.convos:
-            if sid and c.sid == sid:
+            if sid and c.sid == sid and not c.fork:
                 return c
         return None
 
@@ -1147,6 +1286,71 @@ class ChatPanel(QtWidgets.QWidget):
             c.start()
         self._show(c)
 
+    def set_models(self, models):
+        """The model menu comes from the CLI's own list (initialize), not a hardcoded one."""
+        if not models or getattr(self, "_models_from_cli", False):
+            return
+        self._models_from_cli = True
+        self.models = {(m.get("value") if m.get("value") != "default" else None): m for m in models}
+        cur = self.cur.model if self.cur else None
+        self.model_box.blockSignals(True)
+        self.model_box.clear()
+        for m in models:
+            v = m.get("value")
+            self.model_box.addItem(m.get("displayName") or v, None if v == "default" else v)
+            self.model_box.setItemData(self.model_box.count() - 1, m.get("description") or "", QtCore.Qt.ToolTipRole)
+        if self.model_box.findData(cur) < 0 and cur:
+            self.model_box.addItem(cur, cur)
+        self.model_box.blockSignals(False)
+        self._set_combo(self.model_box, cur)
+        self._sync_effort()
+
+    def _sync_effort(self):
+        """Only the effort levels the on-screen model supports."""
+        c = self.cur
+        m = getattr(self, "models", {}).get(c.model if c else None)
+        levels = m.get("supportedEffortLevels") if m else None
+        ok = bool(m.get("supportsEffort")) if m else True
+        for i in range(1, self.effort_box.count()):
+            v = self.effort_box.itemData(i)
+            item = self.effort_box.model().item(i)
+            item.setEnabled(ok and (levels is None or v in levels))
+        self.effort_box.setEnabled(ok)
+        self._set_combo(self.effort_box, c.effort if c else None)
+
+    def _effort_changed(self):
+        if self.cur is not None:
+            self.cur.set_effort(self.effort_box.currentData())
+
+    def _history_menu(self, pos):
+        it = self.list.itemAt(pos)
+        if it is None:
+            return
+        sid, title = it.data(QtCore.Qt.UserRole), it.data(QtCore.Qt.UserRole + 1)
+        m = QtWidgets.QMenu(self)
+        m.setStyleSheet("QMenu{background:#1c1c22;color:#e6e6ea;border:1px solid #36363e;}"
+                        "QMenu::item:selected{background:#2e2e38;}")
+        ren = m.addAction("Rename...")
+        fork = m.addAction("Fork - continue in a copy")
+        got = m.exec(self.list.mapToGlobal(pos))
+        if got is ren:
+            new, ok = QtWidgets.QInputDialog.getText(self, "Rename session", "Title:", text=title)
+            if ok and new.strip():
+                c = self._convo_for(sid)
+                if c is None:
+                    c = Convo(self, resume=sid, title=title, model=self.model_box.currentData())
+                    self.convos.append(c); c.load(sid)
+                c.rename(new.strip())
+                self._show(c)
+        elif got is fork:
+            c = Convo(self, resume=sid, title="Fork of " + (title or "session"), model=self.model_box.currentData(),
+                      fork=True)
+            self.convos.append(c)
+            c.load(sid)
+            c.add_note("Forked - this is a new session; the original is untouched.", "#9a9aff")
+            c.start()
+            self._show(c)
+
     @staticmethod
     def _set_combo(box, value):
         i = box.findData(value)
@@ -1168,6 +1372,7 @@ class ChatPanel(QtWidgets.QWidget):
         # the menus always show the on-screen conversation's REAL model and mode
         self._set_combo(self.model_box, c.model)
         self._set_combo(self.mode_box, c.mode)
+        self._sync_effort()
         self.stop_btn.setVisible(c.busy)
         self.send_btn.setText("Queue" if c.busy else "Send")
         if c.context:
@@ -1273,6 +1478,9 @@ class ChatPanel(QtWidgets.QWidget):
     def _model_changed(self):
         if self.cur is not None:
             self.cur.set_model(self.model_box.currentData())
+            if self.cur.effort and self.cur.effort not in (
+                    (getattr(self, "models", {}).get(self.cur.model) or {}).get("supportedEffortLevels") or [self.cur.effort]):
+                self.cur.effort = None           # the new model can't do that effort level
             self.convo_changed(self.cur)
 
     def _mode_changed(self):

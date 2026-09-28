@@ -189,5 +189,22 @@ A three-part review (chat bugs, Houdini-side bugs, gaps against Claude Code) led
   brother_link. The overlay timer stops while hidden. The shelf's Preview Edges always pairs its
   calls.
 
-Still open, next round: rewind files, image thumbnails in tool results, model list from
-`initialize`, effort control, fork/rename session, and per-subagent streams.
+## Round 2 (2026-09-28)
+
+- **Rewind files to here** on each of your messages. Needs the launch flag
+  `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` (re-inserted after `claude_env()` strips every
+  `CLAUDE_*`) and `--replay-user-messages`. The echoed message's `uuid` is the rewind point.
+  Trap: a /model or other local command is echoed too (`<local-command-stdout>...`), so the echo
+  is matched to its bubble by TEXT, not by order. A dry run lists the files first. Only
+  Write/Edit changes are tracked (not Bash).
+- The model menu is filled from the CLI's `initialize` answer (Fable and Opus 1M included). The
+  effort menu enables only the levels the current model supports (`--effort` at launch,
+  `apply_flag_settings {effortLevel}` mid-session).
+- History right-click: **Rename** (`rename_session`, which writes a `custom-title` line) and
+  **Fork** (`--resume <id> --fork-session`; the fork names itself "Fork of ...").
+- Images in tool results (screenshots, Read of a PNG) show as thumbnails; click to enlarge.
+- Each agent streams into its own blocks (keyed by `parent_tool_use_id`), so parallel subagents
+  can't write into each other's text. Subagent text is indented. Not yet tested live with real
+  parallel subagents.
+- The panel's corners were square on the left: the sidebar painted a square background over the
+  panel's rounded border. The layout is now inset 1px and the sidebar has its own left radii.
