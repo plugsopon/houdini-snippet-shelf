@@ -116,3 +116,25 @@ Nothing is running unless you start it.
   colour, in at once, out ~1s after the last request. Colour/strength/width in AI Settings.
   Hot-update note: never `reload(brother_link)` in a live session - it resets `_state`
   (server + token) and drops the connection; graft new functions onto the module instead.
+
+### AI > Chat... - Claude Code inside Houdini (2026-09-28)
+
+`mcp/houdini/brother_chat.py`. Drives the machine's own `claude` CLI exactly like Dremzo Desktop:
+the real claude.exe behind the npm shim, `-p --input-format stream-json --output-format
+stream-json --verbose --include-partial-messages --permission-prompt-tool stdio`, authenticated
+by the machine's Claude login (`CLAUDE_CODE_OAUTH_TOKEN`, read from the user registry if Houdini
+started before `setx`). One QProcess per session, alive across turns; cwd = this repo, the hip's
+folder via `--add-dir`, houdini-live via `--mcp-config` with its look-only tools pre-allowed.
+
+Protocol measured against claude 2.1.226 (the docs-summary agent's shapes were WRONG - e.g. it
+claimed a `user_message` input type): input `{"type":"user","message":{...}}`; control requests
+`initialize` (answers with the slash-command list), `interrupt`, `set_permission_mode`,
+`set_model`; permission asks arrive as `control_request/can_use_tool` and are answered with a
+`control_response` carrying `{"behavior":"allow","updatedInput":...}` or `deny`.
+
+Traps:
+- **Houdini sets PYTHONHOME to its Python 3.11.** Inherited by the MCP server (system Python
+  3.13) it cannot find its stdlib and houdini-live shows `failed` in system/init while every
+  other server connects. `claude_env()` drops PYTHONHOME/PYTHONPATH and Houdini's PATH dirs.
+- Strip `CLAUDECODE` / `CLAUDE_*` (except the token) or the child thinks it is a nested SDK child
+  and answers "Not logged in" (Desktop learned this 2026-06-20).

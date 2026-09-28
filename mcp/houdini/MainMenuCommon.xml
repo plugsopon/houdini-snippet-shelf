@@ -8,6 +8,18 @@
       <label>AI</label>
       <insertAfter>help_menu</insertAfter>
 
+      <scriptItem id="brother_ai_chat">
+        <label>Chat...</label>
+        <scriptCode><![CDATA[
+import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_chat
+brother_chat.show_chat()
+]]></scriptCode>
+      </scriptItem>
+
       <scriptItem id="brother_ai_settings">
         <label>AI Settings...</label>
         <scriptCode><![CDATA[
