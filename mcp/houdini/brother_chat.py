@@ -433,7 +433,9 @@ class AutoText(QtWidgets.QTextBrowser):
     """A text block that grows to fit (markdown), with no scrollbar of its own."""
     def __init__(self, markdown="", color=None, mono=False, parent=None):
         super().__init__(parent)
-        self.setOpenExternalLinks(True)
+        self.setOpenLinks(False)                    # we route links: copy:N copies a code block
+        self.anchorClicked.connect(self._link)
+        self._codes = []
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
@@ -452,8 +454,45 @@ class AutoText(QtWidgets.QTextBrowser):
         if self.mono:
             self.setPlainText(text)
         else:
-            self.setMarkdown(text)
+            self.setHtml(self._with_code_blocks(text))
         self._fit()
+
+    # Qt's markdown renders a fenced block as an ordinary paragraph, so code read like prose.
+    # Fenced blocks become real code blocks: dark box, monospace, language label, Copy.
+    _FENCE = re.compile(r"```([^\n`]*)\n(.*?)(?:\n?```|\Z)", re.S)
+
+    def _with_code_blocks(self, text):
+        self._codes = []
+        out, pos = [], 0
+        for m in self._FENCE.finditer(text):
+            out.append(_md_html(text[pos:m.start()]))
+            lang, code = m.group(1).strip(), m.group(2)
+            self._codes.append(code)
+            out.append(
+                "<table width='100%%' cellspacing='0' cellpadding='0' bgcolor='#0c0c0f' "
+                "style='margin-top:6px;margin-bottom:6px;border:1px solid #2c2c34;'>"
+                "<tr><td bgcolor='#17171c' style='padding:4px 10px;'>"
+                "<table width='100%%' cellspacing='0' cellpadding='0'><tr>"
+                "<td><span style='color:#8a8a94;font-size:11px;'>%s</span></td>"
+                "<td align='right'><a href='copy:%d' style='color:#9ab4ff;font-size:11px;"
+                "text-decoration:none;'>Copy</a></td></tr></table>"
+                "</td></tr><tr><td style='padding:8px 10px;'>"
+                "<pre style='font-family:Consolas,\"Cascadia Mono\",monospace;font-size:12px;color:#e6e6ea;"
+                "margin:0;'>%s</pre></td></tr></table>" % (_esc(lang or "code"), len(self._codes) - 1, _esc(code)))
+            pos = m.end()
+        out.append(_md_html(text[pos:]))
+        return "".join(out)
+
+    def _link(self, url):
+        u = url.toString()
+        if u.startswith("copy:"):
+            try:
+                QtWidgets.QApplication.clipboard().setText(self._codes[int(u[5:])])
+                QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), "Copied")
+            except (ValueError, IndexError):
+                pass
+        else:
+            QtGui.QDesktopServices.openUrl(url)
 
     def append_text(self, delta):
         self.set_text(self._md + delta)
@@ -465,6 +504,23 @@ class AutoText(QtWidgets.QTextBrowser):
 
     def _fit(self, *_):
         self.setFixedHeight(int(self.document().size().height()) + 6)
+
+
+def _md_html(md):
+    """Markdown -> the <body> part of Qt's own HTML for it."""
+    if not md.strip():
+        return ""
+    d = QtGui.QTextDocument(); d.setMarkdown(md)
+    # inline `code`: Qt asks for a generic 'monospace' that Windows maps to a proportional font
+    # inline `code`: Qt uses the app's "fixed" font, which Houdini sets to a proportional face
+    # (Segoe UI) - swap it for a real monospace with a faint background, like Claude's
+    fixed = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont).family()
+    h = d.toHtml()
+    for fam in {fixed, "monospace", "Courier New"}:
+        h = h.replace("font-family:'%s';" % fam,
+                      "font-family:'Consolas'; background-color:#2a2a32; color:#f0c6d4;")
+    i, j = h.find("<body"), h.rfind("</body>")
+    return h[h.find(">", i) + 1:j] if i >= 0 and j > i else h
 
 
 def _short(v, n=90):
@@ -1711,6 +1767,11 @@ class ChatPanel(QtWidgets.QWidget):
         root.addLayout(main, 1)
         head = QtWidgets.QHBoxLayout(); main.addLayout(head)
         self.head_title = QtWidgets.QLabel("New session", objectName="title"); head.addWidget(self.head_title, 1)
+        self.max_btn = QtWidgets.QPushButton("⤢", objectName="flat")
+        self.max_btn.setToolTip("Expand to fill the screen (or double-click the header)")
+        self.max_btn.setStyleSheet("font-size:15px;"); self.max_btn.clicked.connect(self.toggle_max)
+        head.addWidget(self.max_btn)
+        self._normal_geo = None
         hide = QtWidgets.QPushButton("Hide", objectName="flat"); hide.clicked.connect(self.hide)
         head.addWidget(hide)
 
@@ -1790,6 +1851,24 @@ class ChatPanel(QtWidgets.QWidget):
         super().resizeEvent(e)
         for g in getattr(self, "grips", []):
             g.place()
+
+    def toggle_max(self):
+        """Fill the screen the panel is on; again to go back to the size it had."""
+        if self._normal_geo is None:
+            self._normal_geo = QtCore.QRect(self.geometry())
+            scr = self.screen() or QtGui.QGuiApplication.primaryScreen()
+            self.setGeometry(scr.availableGeometry())
+            self.max_btn.setText("⤡"); self.max_btn.setToolTip("Restore the previous size")
+        else:
+            self.setGeometry(self._normal_geo)
+            self._normal_geo = None
+            self.max_btn.setText("⤢"); self.max_btn.setToolTip("Expand to fill the screen (or double-click the header)")
+        for g in getattr(self, "grips", []):
+            g.setVisible(self._normal_geo is None)       # nothing to drag while filling the screen
+
+    def mouseDoubleClickEvent(self, e):
+        if e.position().y() < 48:
+            self.toggle_max()
 
     # frameless: drag by the header (the OS moves it - snaps and all - when it can)
     def mousePressEvent(self, e):
