@@ -1462,6 +1462,142 @@ def _git_branch(cwd):
         return ""
 
 
+
+# ============================================================================ voice input
+WHISPER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "brother_whisper.py")
+VOICE_PROMPT = ("Houdini, SOP, DOP, VEX, VOP, wrangle, attribute, pyro, FLIP, vellum, RBD, voxel, "
+                "Karma, solver, node, parm, Brother")
+
+
+def _system_python():
+    """A Python that is NOT Houdini's: faster-whisper lives in the user's own install."""
+    env = claude_env()
+    for d in env.value("PATH").split(os.pathsep):
+        exe = os.path.join(d, "python.exe")
+        if d and os.path.exists(exe) and "windowsapps" not in d.lower():
+            return exe, env
+    return shutil.which("py"), env
+
+
+class WhisperWorker(QtCore.QObject):
+    """The long-lived brother_whisper.py process: the model loads once, then each clip is ~1s."""
+    ready = QtCore.Signal(str)
+    result = QtCore.Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.proc, self.buf, self.is_ready, self.pending = None, b"", False, []
+
+    def start(self):
+        if self.proc is not None and self.proc.state() != QtCore.QProcess.NotRunning:
+            return
+        exe, env = _system_python()
+        env.remove("PYTHONNOUSERSITE")
+        self.proc = QtCore.QProcess(self)
+        self.proc.setProcessEnvironment(env)
+        self.proc.readyReadStandardOutput.connect(self._read)
+        self.proc.finished.connect(self._died)
+        self.proc.start(exe or "python", ["-u", WHISPER_SCRIPT])
+
+    def _died(self, *_):
+        was_ready, self.is_ready = self.is_ready, False
+        err = bytes(self.proc.readAllStandardError()).decode("utf8", "replace").strip().splitlines()
+        if not was_ready or self.pending:         # never came up, or died holding a clip
+            self.pending = []
+            self.ready.emit("worker stopped: " + (err[-1] if err else "no output"))
+
+    def transcribe(self, wav):
+        self.start()
+        req = {"wav": wav, "prompt": VOICE_PROMPT}
+        if self.is_ready:
+            self.proc.write((json.dumps(req) + "\n").encode("utf8"))
+        else:
+            self.pending.append(req)                # sent as soon as the model has loaded
+
+    def _read(self):
+        self.buf += bytes(self.proc.readAllStandardOutput())
+        *lines, self.buf = self.buf.split(b"\n")
+        for raw in lines:
+            try:
+                o = json.loads(raw.decode("utf8", "replace"))
+            except ValueError:
+                continue
+            if "ready" in o:
+                self.is_ready = bool(o["ready"])
+                self.ready.emit(o.get("device") or o.get("error") or "")
+                for req in self.pending:
+                    self.proc.write((json.dumps(req) + "\n").encode("utf8"))
+                self.pending = []
+            else:
+                self.result.emit(o)
+
+
+class MicRecorder(QtCore.QObject):
+    """Raw PCM from the default microphone into a .wav (QtMultimedia QAudioSource)."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.src, self.io, self.data, self.fmt = None, None, bytearray(), None
+
+    def start(self):
+        from PySide6 import QtMultimedia
+        dev = QtMultimedia.QMediaDevices.defaultAudioInput()
+        if dev.isNull():
+            raise RuntimeError("no microphone found")
+        fmt = QtMultimedia.QAudioFormat()
+        fmt.setSampleRate(16000); fmt.setChannelCount(1); fmt.setSampleFormat(QtMultimedia.QAudioFormat.Int16)
+        if not dev.isFormatSupported(fmt):
+            fmt = dev.preferredFormat()
+        self.fmt, self.data = fmt, bytearray()
+        self.src = QtMultimedia.QAudioSource(dev, fmt, self)
+        self.io = self.src.start()
+        self.io.readyRead.connect(self._pull)
+        self.device_name = dev.description()
+
+    def _pull(self):
+        try:
+            self.data += bytes(self.io.readAll())
+        except RuntimeError:
+            pass
+
+    def level(self):
+        """Loudness of the last ~0.1s, 0..1 - so the button can show the mic is actually hearing."""
+        import array
+        if not self.data or self.fmt is None:
+            return 0.0
+        from PySide6 import QtMultimedia
+        if self.fmt.sampleFormat() != QtMultimedia.QAudioFormat.Int16:
+            return 0.5
+        tail = bytes(self.data[-3200:])
+        a = array.array("h", tail[: len(tail) // 2 * 2])
+        return min(1.0, (max((abs(x) for x in a), default=0) / 12000.0))
+
+    def stop(self, path):
+        """Write what was heard to `path`; returns its length in seconds."""
+        import array, wave
+        from PySide6 import QtMultimedia
+        self._pull()
+        if self.src is not None:
+            self.src.stop()
+        f, raw = self.fmt, bytes(self.data)
+        sf = f.sampleFormat()
+        if sf == QtMultimedia.QAudioFormat.Float:           # whisper reads 16-bit wav fine; convert
+            a = array.array("f", raw[: len(raw) // 4 * 4])
+            raw = array.array("h", (max(-32768, min(32767, int(x * 32767))) for x in a)).tobytes()
+            width = 2
+        elif sf == QtMultimedia.QAudioFormat.Int32:
+            a = array.array("i", raw[: len(raw) // 4 * 4])
+            raw = array.array("h", (x >> 16 for x in a)).tobytes()
+            width = 2
+        elif sf == QtMultimedia.QAudioFormat.UInt8:
+            width = 1
+        else:
+            width = 2
+        with wave.open(path, "wb") as w:
+            w.setnchannels(f.channelCount()); w.setsampwidth(width); w.setframerate(f.sampleRate())
+            w.writeframes(raw)
+        return len(raw) / float(width * f.channelCount() * f.sampleRate())
+
+
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
@@ -1564,6 +1700,13 @@ class ChatPanel(QtWidgets.QWidget):
         self.plus_btn = QtWidgets.QPushButton("+", objectName="bar"); self.plus_btn.setFixedWidth(28)
         self.plus_btn.setStyleSheet("font-size:16px;"); self.plus_btn.setToolTip("Add files, folders, commands...")
         self.plus_btn.clicked.connect(self._plus_menu); bar.addWidget(self.plus_btn)
+        self.mic_btn = QtWidgets.QPushButton("🎙", objectName="bar"); self.mic_btn.setMinimumWidth(30)
+        self.mic_btn.setToolTip("Dictate (Ctrl+M) - click to start, click again to stop. Thai and English.\n"
+                                "Runs Whisper on this machine; nothing is uploaded.")
+        self.mic_btn.clicked.connect(self._mic_toggle); bar.addWidget(self.mic_btn)
+        self.mic, self.whisper, self.mic_t0 = None, None, 0.0
+        self.mic_timer = QtCore.QTimer(self); self.mic_timer.timeout.connect(self._mic_tick)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+M"), self, activated=self._mic_toggle)
         self.mode_btn = QtWidgets.QPushButton("Manual", objectName="bar"); self.mode_btn.clicked.connect(self._mode_menu)
         bar.addWidget(self.mode_btn)
         bar.addStretch(1)
@@ -1755,6 +1898,70 @@ class ChatPanel(QtWidgets.QWidget):
                 {"icon": "⧉", "label": "Connectors", "sub": connectors, "sub_width": 300},
                 {"icon": "✦", "label": "Plugins", "sub": plugins, "sub_width": 300}]
         PopupMenu(rows, width=250, parent=self).show_at(self.plus_btn)
+
+    # ---------------------------------------------------------------- voice
+    def _mic_toggle(self):
+        if self.mic is not None:
+            self._mic_stop(); return
+        if self.whisper is None:
+            self.whisper = WhisperWorker(self)
+            self.whisper.ready.connect(self._whisper_ready)
+            self.whisper.result.connect(self._whisper_result)
+        self.whisper.start()                         # warm the model while Plug talks
+        self.mic = MicRecorder(self)
+        try:
+            self.mic.start()
+        except Exception as e:
+            self.mic = None
+            self.add_note("Microphone: %s" % e, "#ff8a9a"); return
+        self.mic_t0 = time.time()
+        self.mic_btn.setStyleSheet("color:#ff5a6a;font-weight:700;")
+        self.mic_btn.setToolTip("Listening on %s - click (or Ctrl+M) to stop" % self.mic.device_name)
+        self.mic_timer.start(100)
+
+    def _mic_tick(self):
+        if self.mic is None:
+            return
+        t = int(time.time() - self.mic_t0)
+        lv = self.mic.level()
+        bars = "▁▂▃▄▅▆▇"[min(6, int(lv * 7))]
+        self.mic_btn.setText("● %d:%02d %s" % (t // 60, t % 60, bars))
+
+    def _mic_stop(self):
+        self.mic_timer.stop()
+        path = os.path.join(os.environ.get("TEMP", "."), "brother_dictation_%d.wav" % int(time.time() * 1000))
+        try:
+            secs = self.mic.stop(path)
+        except Exception as e:
+            secs = 0; self.add_note("Microphone: %s" % e, "#ff8a9a")
+        self.mic = None
+        self.mic_btn.setStyleSheet("")
+        if secs < 0.3:
+            self.mic_btn.setText("🎙"); return
+        self.mic_btn.setText("… transcribing")
+        self.mic_btn.setEnabled(False)
+        self._pending_wav = path
+        self.whisper.transcribe(path)
+
+    def _whisper_ready(self, device):
+        if device not in ("cuda", "cpu"):
+            self.add_note("Voice input could not start: %s  (setup: see brother_whisper.py)" % device, "#ff8a9a")
+            self.mic_btn.setText("🎙"); self.mic_btn.setEnabled(True)
+
+    def _whisper_result(self, o):
+        self.mic_btn.setText("🎙"); self.mic_btn.setEnabled(True)
+        try:
+            os.remove(getattr(self, "_pending_wav", ""))
+        except OSError:
+            pass
+        if not o.get("ok"):
+            self.add_note("Voice input: %s" % o.get("error"), "#ff8a9a"); return
+        text = (o.get("text") or "").strip()
+        if not text:
+            self.add_note("Didn't catch anything - check the mic in Windows sound settings.", "#ffb84d"); return
+        cur = self.composer.toPlainText()
+        self.composer.insertPlainText(("" if not cur or cur.endswith((" ", "\n")) else " ") + text)
+        self.composer.setFocus()
 
     def _open_slash(self):
         self.composer.setPlainText("/")

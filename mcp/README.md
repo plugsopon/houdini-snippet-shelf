@@ -226,3 +226,23 @@ A three-part review (chat bugs, Houdini-side bugs, gaps against Claude Code) led
   segfaults ALL of Houdini (signal 11 in `QPainter::end`). It happened once:
   `QPen(color, w, cap=...)` is not accepted by this PySide. Every custom paint (chat, cursor
   overlay, settings) now runs inside try/finally and only prints errors. Keep it that way.
+
+## Voice input (2026-09-29)
+
+The 🎙 button (or Ctrl+M) under the composer records from the Windows default microphone
+(QtMultimedia `QAudioSource`, 16 kHz mono) and transcribes locally with **faster-whisper
+large-v3-turbo on the GPU**, ~1 s per clip, Thai + English. Nothing is uploaded. The text is
+inserted at the cursor; you still press Send.
+
+- `brother_whisper.py` is a long-lived worker in the SYSTEM Python (not Houdini's). The model
+  loads once, on first use.
+- Install it with `pip install --target %USERPROFILE%\.houdini_brother\whisper faster-whisper
+  nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"` (~2.3 GB) plus the model (~1.6 GB, Hugging Face
+  cache).
+- **Trap:** never install it with `--user` from a shell inside the Claude desktop app. It's an
+  MSIX package, so its %APPDATA% is virtualised and a --user install lands where Houdini can't see
+  it (`ModuleNotFoundError` in the worker).
+- **Trap:** the worker's stdout is cp1252 under QProcess, so results are ASCII-escaped JSON.
+  Otherwise every Thai transcript dies with a 'charmap' error while English works fine.
+- A short list of Houdini terms (`VOICE_PROMPT`) is passed as the initial prompt, so words like
+  VEX, FLIP and voxel come out spelled right.
