@@ -34,27 +34,6 @@ brother_ui.show_settings()
 
       <separatorItem/>
 
-      <scriptItem id="brother_ai_connect">
-        <label>Connect Brother to this session</label>
-        <scriptCode><![CDATA[
-import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
-if p not in sys.path:
-    sys.path.insert(0, p)
-import brother_link
-brother_link.start()
-]]></scriptCode>
-      </scriptItem>
-
-      <scriptItem id="brother_ai_disconnect">
-        <label>Disconnect Brother</label>
-        <scriptCode><![CDATA[
-import sys
-if "brother_link" in sys.modules:
-    sys.modules["brother_link"].stop()
-]]></scriptCode>
-      </scriptItem>
-
       <scriptItem id="brother_ai_hide_cursor">
         <label>Hide Brother's cursor</label>
         <scriptCode><![CDATA[

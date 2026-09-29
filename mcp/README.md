@@ -246,3 +246,15 @@ inserted at the cursor; you still press Send.
   Otherwise every Thai transcript dies with a 'charmap' error while English works fine.
 - A short list of Houdini terms (`VOICE_PROMPT`) is passed as the initial prompt, so words like
   VEX, FLIP and voxel come out spelled right.
+
+## No more "Connect" (2026-09-29)
+
+- `pythonrc.py`, installed to `$HOUDINI_USER_PREF_DIR/python3.11libs/`, starts brother_link
+  silently each time Houdini opens (`start(quiet=True)`, so the Houdini Console doesn't pop up).
+  It's a pythonrc and not a 123.py because Houdini runs every pythonrc.py on its path, while a
+  user 123.py would replace SideFX's own 123.cmd.
+- The chat launches claude with `HOUDINI_BROTHER_PID=<its Houdini>`. server.py pins that
+  session, so a chat always talks to the Houdini it was opened from, even with several open.
+  No `houdini_use_session` needed. `houdini_sessions` shows `pinned_by_chat`.
+- Connect / Disconnect were removed from the FX AI menu and shelf. `brother_link.stop()` in the
+  Python Shell still stops it.

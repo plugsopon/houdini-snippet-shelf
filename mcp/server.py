@@ -12,7 +12,10 @@ REG_DIR = os.path.join(os.path.expanduser("~"), ".houdini_brother", "sessions")
 TIMEOUT = 120.0            # a heavy cook can take a while; the request runs on Houdini's main thread
 
 mcp = FastMCP("houdini-live")
-_selected = {"pid": None}
+# the Houdini chat panel launches claude with HOUDINI_BROTHER_PID = its own Houdini, so a chat
+# is always bound to the Houdini it was opened from - no houdini_use_session needed
+_pin = os.environ.get("HOUDINI_BROTHER_PID")
+_selected = {"pid": int(_pin) if _pin and _pin.isdigit() else None}
 
 
 # ----------------------------------------------------------------------------- transport
@@ -80,8 +83,11 @@ def _current():
         for reg, _ in ss:
             if reg["pid"] == _selected["pid"]:
                 return reg
-        gone, _selected["pid"] = _selected["pid"], None
-        raise RuntimeError("The selected session (pid %s) is gone. Call houdini_sessions and pick again." % gone)
+        gone = _selected["pid"]
+        if not _pin:
+            _selected["pid"] = None
+        raise RuntimeError("The Houdini session (pid %s) is not connected - it may have closed or its "
+                           "link stopped." % gone)
     if len(ss) == 1:
         return ss[0][0]
     raise RuntimeError("%d Houdini sessions are open - call houdini_sessions, then houdini_use_session "
@@ -106,7 +112,8 @@ def houdini_sessions() -> str:
                      "hip": (info or {}).get("hip", reg.get("hip")),
                      "unsaved": (info or {}).get("unsaved"), "houdini": reg.get("houdini"),
                      "frame": (info or {}).get("frame"), "answering": info is not None,
-                     "selected": reg["pid"] == _selected["pid"]})
+                     "selected": reg["pid"] == _selected["pid"],
+                     "pinned_by_chat": bool(_pin) and str(reg["pid"]) == _pin})
     if not rows:
         return "No sessions. Plug needs to run brother_link.start() inside Houdini (see mcp/README.md)."
     return json.dumps(rows, ensure_ascii=False, indent=1)

@@ -8,8 +8,6 @@
   <toolshelf name="fx_ai" label="FX AI">
     <memberTool name="fxai_chat"/>
     <memberTool name="fxai_settings"/>
-    <memberTool name="fxai_connect"/>
-    <memberTool name="fxai_disconnect"/>
     <memberTool name="fxai_hide_cursor"/>
     <memberTool name="fxai_preview_edges"/>
   </toolshelf>
@@ -33,25 +31,6 @@ if p not in sys.path:
     sys.path.insert(0, p)
 import brother_ui
 brother_ui.show_settings()
-]]></script>
-  </tool>
-
-  <tool name="fxai_connect" label="Connect" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_connect.svg">
-    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
-    <script scriptType="python"><![CDATA[import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
-if p not in sys.path:
-    sys.path.insert(0, p)
-import brother_link
-brother_link.start()
-]]></script>
-  </tool>
-
-  <tool name="fxai_disconnect" label="Disconnect" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_disconnect.svg">
-    <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
-    <script scriptType="python"><![CDATA[import sys
-if "brother_link" in sys.modules:
-    sys.modules["brother_link"].stop()
 ]]></script>
   </tool>
 

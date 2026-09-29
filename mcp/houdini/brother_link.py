@@ -469,9 +469,10 @@ def _write_registry():
     _state["reg"] = path
 
 
-def start(port=None):
+def start(port=None, quiet=False):
     if _state["server"] is not None:
-        print("brother_link already running on port %d" % _state["port"])
+        if not quiet:
+            print("brother_link already running on port %d" % _state["port"])
         return _state["port"]
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     for p in ([port] if port else range(BASE_PORT, BASE_PORT + 50)):
@@ -488,8 +489,9 @@ def start(port=None):
     t = threading.Thread(target=_serve, args=(srv,), daemon=True)
     t.start()
     _state["thread"] = t
-    print("brother_link: Brother can now see this session (%s) - port %d. brother_link.stop() to close."
-          % (os.path.basename(hou.hipFile.path()), _state["port"]))
+    if not quiet:                       # printing pops the Houdini Console - silent when automatic
+        print("brother_link: Brother can now see this session (%s) - port %d. brother_link.stop() to close."
+              % (os.path.basename(hou.hipFile.path()), _state["port"]))
     return _state["port"]
 
 

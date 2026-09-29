@@ -202,14 +202,13 @@ def houdini_context():
     return (
         "You are Brother, running INSIDE Plug's live SideFX Houdini %s session (pid %d, hip %s), "
         "opened from Houdini's AI > Chat panel. Plug is a senior FX TD. The houdini-live MCP tools "
-        "(mcp__houdini-live__houdini_*) talk to THIS session%s: inspect it with them, and change it "
-        "only when asked - one 'Brother:' undo group per change, never save the hip file. If "
-        "houdini_sessions lists several sessions, call houdini_use_session with pid %d first. "
+        "(mcp__houdini-live__houdini_*) are already bound to THIS session%s - no need to pick one "
+        "with houdini_use_session. Inspect it with them, and change it only when asked - one "
+        "'Brother:' undo group per change, never save the hip file. "
         "Prefer houdini_click_node / houdini_set_parm_shown so Plug sees the cursor work. Reply in "
         "the language Plug writes in (Thai -> Thai, refer to yourself as Brother)."
         % (hou.applicationVersionString(), os.getpid(), hou.hipFile.path(),
-           (" via brother_link on port %d" % port) if port else " (brother_link is not running - "
-           "tell Plug to use AI > Connect Brother to this session)", os.getpid()))
+           (" via brother_link on port %d" % port) if port else " (the link is starting)"))
 
 
 class ClaudeSession(QtCore.QObject):
@@ -263,6 +262,7 @@ class ClaudeSession(QtCore.QObject):
         p.setWorkingDirectory(self.cwd)
         env = claude_env()
         env.insert("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")   # what makes rewind possible
+        env.insert("HOUDINI_BROTHER_PID", str(os.getpid()))   # the MCP tools talk to THIS Houdini, always
         p.setProcessEnvironment(env)
         p.readyReadStandardOutput.connect(self._read)
         p.readyReadStandardError.connect(self._read_err)
@@ -2301,7 +2301,7 @@ def _ensure_link():
     try:
         import brother_link
         if brother_link._state.get("server") is None:
-            brother_link.start()
+            brother_link.start(quiet=True)
     except Exception:
         pass
 
