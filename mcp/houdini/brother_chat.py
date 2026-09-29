@@ -1674,11 +1674,11 @@ class ChatPanel(QtWidgets.QWidget):
 
         # the composer box: thumbnails on top, text, and the round send button inside
         box = QtWidgets.QFrame(objectName="composerBox"); main.addWidget(box)
-        bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(12, 10, 10, 8); bl.setSpacing(6)
+        bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(12, 8, 8, 8); bl.setSpacing(6)
         self.thumbs = QtWidgets.QWidget(); self.thumbs_lay = QtWidgets.QHBoxLayout(self.thumbs)
         self.thumbs_lay.setContentsMargins(0, 0, 0, 0); self.thumbs_lay.setSpacing(8)
         self.thumbs.hide(); bl.addWidget(self.thumbs)
-        row = QtWidgets.QHBoxLayout(); bl.addLayout(row)
+        row = QtWidgets.QHBoxLayout(); bl.addLayout(row); self.composer_row = row
         self.composer = Composer()
         self.composer.submit.connect(self.send)
         self.composer.escape.connect(self.interrupt)
@@ -1689,10 +1689,10 @@ class ChatPanel(QtWidgets.QWidget):
         QtCore.QTimer.singleShot(0, self._fit_composer)
         self.send_btn = QtWidgets.QPushButton("↵", objectName="send"); self.send_btn.setFixedSize(28, 28)
         self.send_btn.setToolTip("Send (Enter)"); self.send_btn.clicked.connect(self.send)
-        row.addWidget(self.send_btn, 0, QtCore.Qt.AlignBottom)
+        row.addWidget(self.send_btn, 0, QtCore.Qt.AlignVCenter)
         self.stop_btn = QtWidgets.QPushButton("■", objectName="stopr"); self.stop_btn.setFixedSize(28, 28)
         self.stop_btn.setToolTip("Stop (Esc)"); self.stop_btn.clicked.connect(self.interrupt); self.stop_btn.hide()
-        row.addWidget(self.stop_btn, 0, QtCore.Qt.AlignBottom)
+        row.addWidget(self.stop_btn, 0, QtCore.Qt.AlignVCenter)
         self.chips = QtWidgets.QLabel(objectName="dim"); self.chips.hide()     # kept for older callers
 
         # the bar under it: + | mode ............ model | effort | context ring
@@ -1969,8 +1969,16 @@ class ChatPanel(QtWidgets.QWidget):
         self.composer.setFocus()
 
     def _fit_composer(self):
-        doc_h = int(self.composer.document().size().height() * self.composer.fontMetrics().lineSpacing()) + 14
-        self.composer.setFixedHeight(max(44, min(160, doc_h)))
+        """Exactly as tall as its text. One line: the text and the send button share one centre
+        line. Several lines: the box grows and the button drops to the bottom, like the Claude app."""
+        c = self.composer
+        lines = max(1, int(round(c.document().size().height())))    # plain-text layout counts lines
+        pad = int(2 * c.document().documentMargin()) + 2 * c.frameWidth() + 4
+        h = min(160, lines * c.fontMetrics().lineSpacing() + pad)
+        c.setFixedHeight(max(28, h))
+        a = QtCore.Qt.AlignVCenter if lines == 1 else QtCore.Qt.AlignBottom
+        for b in (self.send_btn, self.stop_btn):
+            self.composer_row.setAlignment(b, a)
 
     def _effort_changed(self):
         pass
