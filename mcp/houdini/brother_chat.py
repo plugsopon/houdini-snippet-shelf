@@ -1601,6 +1601,64 @@ class MicRecorder(QtCore.QObject):
 SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
 
+class EdgeGrip(QtWidgets.QWidget):
+    """An invisible strip along one edge (or a corner) of a frameless window. Hover shows the
+    resize cursor; dragging hands the resize to the OS, so it feels like any other window."""
+    T, C = 6, 14                                           # edge thickness, corner size
+    E = QtCore.Qt.Edge
+    EDGES = (E.LeftEdge, E.RightEdge, E.TopEdge, E.BottomEdge,
+             E.TopEdge | E.LeftEdge, E.TopEdge | E.RightEdge,
+             E.BottomEdge | E.LeftEdge, E.BottomEdge | E.RightEdge)
+
+    def __init__(self, win, edges):
+        super().__init__(win)
+        self.win, self.edges = win, QtCore.Qt.Edges(edges)
+        E = QtCore.Qt.Edge
+        l, r, t, b = (bool(self.edges & x) for x in (E.LeftEdge, E.RightEdge, E.TopEdge, E.BottomEdge))
+        self.setCursor(QtCore.Qt.SizeFDiagCursor if (t and l) or (b and r) else
+                       QtCore.Qt.SizeBDiagCursor if (t and r) or (b and l) else
+                       QtCore.Qt.SizeHorCursor if (l or r) else QtCore.Qt.SizeVerCursor)
+        self.lrtb = (l, r, t, b)
+        self._start = None
+        self.place(); self.raise_()
+
+    def place(self):
+        W, H, T, C = self.win.width(), self.win.height(), self.T, self.C
+        l, r, t, b = self.lrtb
+        if (l or r) and (t or b):                          # corner
+            self.setGeometry(0 if l else W - C, 0 if t else H - C, C, C)
+        elif l or r:
+            self.setGeometry(0 if l else W - T, C, T, H - 2 * C)
+        else:
+            self.setGeometry(C, 0 if t else H - T, W - 2 * C, T)
+        self.raise_()
+
+    def mousePressEvent(self, e):
+        if e.button() != QtCore.Qt.LeftButton:
+            return
+        h = self.win.windowHandle()
+        if h is not None and h.startSystemResize(self.edges):
+            return
+        self._start = (e.globalPosition().toPoint(), QtCore.QRect(self.win.geometry()))   # fallback
+
+    def mouseMoveEvent(self, e):
+        if self._start is None:
+            return
+        p0, g = self._start
+        d = e.globalPosition().toPoint() - p0
+        l, r, t, b = self.lrtb
+        mw, mh = self.win.minimumWidth() or 520, self.win.minimumHeight() or 360
+        g = QtCore.QRect(g)
+        if l: g.setLeft(min(g.left() + d.x(), g.right() - mw))
+        if r: g.setRight(max(g.right() + d.x(), g.left() + mw))
+        if t: g.setTop(min(g.top() + d.y(), g.bottom() - mh))
+        if b: g.setBottom(max(g.bottom() + d.y(), g.top() + mh))
+        self.win.setGeometry(g)
+
+    def mouseReleaseEvent(self, e):
+        self._start = None
+
+
 class ChatPanel(QtWidgets.QWidget):
     def __init__(self, main):
         super().__init__(main, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
@@ -1615,6 +1673,7 @@ class ChatPanel(QtWidgets.QWidget):
         self._spin = 0
         self.setStyleSheet(CSS)
         self._build()
+        self.setMinimumSize(640, 420)
         self.resize(min(1100, main.width() - 80), min(760, main.height() - 80))
         c = main.geometry().center()
         self.move(c - QtCore.QPoint(self.width() // 2, self.height() // 2))
@@ -1716,7 +1775,8 @@ class ChatPanel(QtWidgets.QWidget):
         self.effort_btn = QtWidgets.QPushButton("Default", objectName="bar"); self.effort_btn.clicked.connect(self._effort_menu)
         self.effort_btn.setToolTip("Effort"); bar.addWidget(self.effort_btn)
         self.ring = ContextRing(); bar.addSpacing(4); bar.addWidget(self.ring); bar.addSpacing(2)
-        grip = QtWidgets.QSizeGrip(self); bar.addWidget(grip, 0, QtCore.Qt.AlignBottom | QtCore.Qt.AlignRight)
+        # resize from any edge or corner, like a normal window (see EdgeGrip) - no corner grip
+        self.grips = [EdgeGrip(self, e) for e in EdgeGrip.EDGES]
         self.cost = QtWidgets.QLabel()            # replaced by the ring; kept so nothing old breaks
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+U"), self, activated=self.attach_files)
 
@@ -1726,9 +1786,17 @@ class ChatPanel(QtWidgets.QWidget):
         self.slash.itemClicked.connect(self._slash_pick)
         self._drag = None
 
-    # frameless: drag by the header
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        for g in getattr(self, "grips", []):
+            g.place()
+
+    # frameless: drag by the header (the OS moves it - snaps and all - when it can)
     def mousePressEvent(self, e):
-        if e.position().y() < 48:
+        if e.position().y() < 48 and e.button() == QtCore.Qt.LeftButton:
+            h = self.windowHandle()
+            if h is not None and h.startSystemMove():
+                return
             self._drag = e.globalPosition().toPoint() - self.frameGeometry().topLeft()
 
     def mouseMoveEvent(self, e):
