@@ -263,6 +263,10 @@ class ClaudeSession(QtCore.QObject):
         env = claude_env()
         env.insert("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "true")   # what makes rewind possible
         env.insert("HOUDINI_BROTHER_PID", str(os.getpid()))   # the MCP tools talk to THIS Houdini, always
+        # the Artifact / ArtifactComments / ArtifactData tools are only offered to the desktop app's
+        # entrypoint; without this the chat can't publish the Snippet Shelf page (v006/v007 sat
+        # unpublished for that reason). claude_env() strips CLAUDE_*, so set it here.
+        env.insert("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
         p.setProcessEnvironment(env)
         p.readyReadStandardOutput.connect(self._read)
         p.readyReadStandardError.connect(self._read_err)

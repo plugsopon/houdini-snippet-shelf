@@ -39,6 +39,10 @@ All data edits go through `shelf.py` (next to this file). Never hand-edit the `l
 4. **Build:** `python shelf.py add <live.html> spec.json "P:\Project\Houdini Snippet Shelf\page\houdini-snippet-shelf.html"`
 5. **Check:** `python shelf.py diff <live.html> <page.html>` must list ONLY the technique you touched.
 6. **Publish:** `Artifact` publish, `file_path` = the page file, `url` = the artifact url, a short `label`. No `icon`, no `capabilities` (the stored ones carry over).
+   The FX AI chat in Houdini has the Artifact tool (it launches the CLI with
+   `CLAUDE_CODE_ENTRYPOINT=claude-desktop`; a plain CLI does NOT get it). If `select:Artifact`
+   finds nothing, the chat predates that fix: tell Plug to reopen the chat, and say the artifact
+   is behind. Never silently skip this step — v006/v007 sat unpublished for a day that way.
 7. **Export + push:**
    ```
    python shelf.py export "P:\Project\Houdini Snippet Shelf\page\houdini-snippet-shelf.html" "P:\Project\Houdini Snippet Shelf"
@@ -60,6 +64,7 @@ Plug reads the shelf in Thai. Put the notes, descriptions and file notes in Thai
 | Building from the repo page instead of the live artifact | Plug's own page edits are overwritten |
 | Publishing without `url` | A second, separate artifact is created |
 | Updating the page but not `techniques/` or git | Folder and GitHub go stale |
+| Updating folder + git but not the artifact | The page Plug actually reads stays old |
 | `"v": "v005"` when v005 exists | `shelf.py` refuses; use `auto` |
 | Forgetting `append_previous_notes` | The history in the notes stops at this version |
 | `git add -A` | Sweeps in stray scratch files; add `page techniques hip` by name |

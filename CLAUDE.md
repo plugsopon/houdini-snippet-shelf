@@ -9,6 +9,11 @@ Skills in `.claude/skills/` — use them:
 - `houdini-hython-verify` — checking scripts / .hipnc files headlessly before handing them over
 - `houdini-shelf-publish` — adding a technique or version to the shelf (artifact + folder + git)
 
+The Artifact tool IS available in the FX AI chat inside Houdini (brother_chat sets
+`CLAUDE_CODE_ENTRYPOINT=claude-desktop`, 2026-10-03). Publishing the shelf page is part of every
+shelf update — never stop at folder + git. If `Artifact` is genuinely missing, say so to Plug
+plainly and remind him the artifact is behind; don't leave it for him to discover.
+
 Live Houdini (`houdini-live` MCP, see mcp/README.md): only reaches a session where Plug ran
 `brother_link.start()` himself. If several are open, ask which one (or match the hip name he
 mentions) and `houdini_use_session` it. Debug by LOOKING first (scene → problems → node →
