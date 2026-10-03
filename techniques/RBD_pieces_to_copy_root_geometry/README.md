@@ -1,9 +1,20 @@
 # RBD pieces → copy root geometry
 
-Category: RBD · Type: Sop · Latest: v005 (2026-09-26)
-All versions: v001, v002, v003, v004, v005 (older versions live in the shelf page)
+Category: RBD · Type: Sop · Latest: v006 (2026-10-03)
+All versions: v001, v002, v003, v004, v005, v006 (older versions live in the shelf page)
 
 ## Notes
+
+v006: Recompute orient จาก cache (มีแค่ geometry ที่ cache ไว้ ไม่มี sim points) แล้ว instance ใน LOP
+• สคริปต์ใหม่ add_orient_from_cache.py: ตั้ง CACHE_NODE (เช่น filecache1) กับ REST_FRAME แล้วรัน
+• Extract Transform (Use Piece Attribute = name, Primitive) เทียบเฟรม rest กับทุกเฟรม → 1 point ต่อชิ้น มี P + orient + pivot
+• prototype = ชิ้นที่เฟรม rest เลื่อนด้วย -pivot ให้อยู่ที่ origin แล้วทิ้ง pivot จาก point
+• USD ห้ามมี - ในชื่อ prim (piece0-0-0 กลายเป็น piece0_0_0) instancer เลยหา prototype ไม่เจอแล้ว skip ทุกชิ้น สคริปต์ทำชื่อให้ตรงกันทั้งสองฝั่ง
+• cache ที่เป็น packed จะ unpack ให้ก่อน (เก็บ name ไว้)
+
+วัดผลแล้ว (fracture 25 ชิ้น, เฟรม 1/10/25/40): ประกอบชิ้นกลับจาก orient + P ตรงกับ cache ≤ 0.000001 · LOP (unpack กลับ) ≤ 0.0005 ทั้ง cache แบบ polygon, packed และชิ้นที่หมุนคนละแกน
+ในฉากของพี่ (rbd_root_copy/filecache1) ทำมือแล้วเทียบที่เฟรม 20 ได้ 0.0000003
+ทดสอบกับ H21.0.671 ยังไม่ได้ทดสอบใน 20.5
 
 v005: ใช้กล่อง fracture เป็นชิ้น root (ตามไฟล์ emittingRBD_root ของพี่)
 • ROOT_SOURCE = "fracture" (default): box → RBD Material Fracture → Clean (ลบ attrib/group) → Normal (cusp 0) → Assemble (pack) = piece0..pieceN-1
@@ -112,3 +123,14 @@ DOP Import ต้องใส่ Transfer Attributes = orient pivot restxform na
 
 อ่านผล: angle ≈ 0 แต่ offset ไม่ 0 = ปัญหา pivot · angle ≈ 180 = แกนกลับด้าน · fit_rms สูง = shape ต่างด้วย (scale หรือลำดับ point ไม่ตรง)
 ทางไม่ต้องเขียนโค้ด: Extract Transform SOP (input 1 = ตัวถูก, input 2 = ตัวที่เช็ค)
+
+### add_orient_from_cache.py — Recompute orient from a cache → LOP PointInstancer
+
+- Where: Python Shell
+- Tested: Houdini 21.0.671 · empty scene (fracture + bullet / packed / spin) + Plug's rbd_root_copy
+
+มีแค่ cache ของชิ้น (polygon หรือ packed ที่มี name) ไม่มี sim points: สร้าง point ต่อชิ้นพร้อม orient ใหม่ด้วย Extract Transform แล้ว instance ใน LOP ตั้ง CACHE_NODE กับ REST_FRAME แล้วรัน
+
+สร้าง ORIENT_rest (timeshift ที่ REST_FRAME) → ORIENT_extract → ORIENT_points (ลบ pivot, ชื่อแบบ USD) → OUT_orient_points และ ORIENT_protos (ชิ้น rest เลื่อน -pivot ไป origin) → ORIENT_protos_path → OUT_orient_protos
+ADD_LOP = True สร้าง LOP_orient_instancing (sopimport root_pieces → instancer1 → OUT_instances) และ LOP_orient_check_import → LOP_orient_check_unpackusd กลับมาเช็คใน SOP
+REST_FRAME ต้องเป็นเฟรมที่ชิ้นยังไม่ขยับ orient คือการหมุนเทียบกับเฟรมนั้น
