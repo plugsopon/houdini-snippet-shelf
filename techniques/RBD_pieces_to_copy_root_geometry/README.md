@@ -1,9 +1,24 @@
 # RBD pieces → copy root geometry
 
-Category: RBD · Type: Sop · Latest: v006 (2026-10-03)
-All versions: v001, v002, v003, v004, v005, v006 (older versions live in the shelf page)
+Category: RBD · Type: Sop · Latest: v007 (2026-10-03)
+All versions: v001, v002, v003, v004, v005, v006, v007 (older versions live in the shelf page)
 
 ## Notes
+
+v007: add_orient_from_cache.py ใช้กับ cache ที่เป็น packed ได้แล้ว ไม่ต้อง unpack ทุกเฟรม (สำหรับ RBD หนัก ๆ)
+• สคริปต์ดูเองว่า cache เป็น packed หรือ polygon แล้วเลือกทางให้
+• packed: อ่าน orient + scale จาก intrinsic packedfulltransform ของแต่ละชิ้นตรง ๆ ส่วน P ของ point ก็คือ pivot ที่ขยับแล้ว (PACKED_points)
+• prototype: timeshift ไป REST_FRAME → ตั้ง transform = identity, P = 0 → unpack แค่เฟรมนั้นเฟรมเดียว ได้ชิ้นรอบ pivot (PACKED_protos_unpack ไม่ time dependent cook ครั้งเดียว)
+• name อยู่บน point (แบบ cache ของพี่) หรือบน prim ก็ได้
+• polygon cache ยังใช้ Extract Transform แบบ v006
+
+กับดักที่เจอ:
+1) VEX: matrix3(primintrinsic(0, "packedfulltransform", pr)) อ่านค่า 16 ตัวเป็น 3x3 ผิดช่อง scale z กลายเป็น 0 ต้องอ่านเป็น matrix (4x4) ก่อนแล้วค่อย matrix3()
+2) ถ้าเขียน v@scale แค่บางจุด จุดอื่นได้ 0 instance หายหมด ต้องเขียนทุกจุด
+
+วัดผลแล้ว (fracture 25 ชิ้น, เฟรม 1/10/25/40, เทียบกับ unpack ของ cache): polygon, packed (name บน prim), packed (name บน point), packed ที่หมุนคนละแกนผ่าน intrinsic transform → SOP ≤ 0.0000012, LOP ≤ 0.0006
+ในฉากพี่ (no_unpack, ทำมือ) เฟรม 1-20: SOP ≤ 0.0000003, LOP ≤ 0.00023
+ทดสอบกับ H21.0.671 ยังไม่ได้ทดสอบใน 20.5
 
 v006: Recompute orient จาก cache (มีแค่ geometry ที่ cache ไว้ ไม่มี sim points) แล้ว instance ใน LOP
 • สคริปต์ใหม่ add_orient_from_cache.py: ตั้ง CACHE_NODE (เช่น filecache1) กับ REST_FRAME แล้วรัน
@@ -124,13 +139,15 @@ DOP Import ต้องใส่ Transfer Attributes = orient pivot restxform na
 อ่านผล: angle ≈ 0 แต่ offset ไม่ 0 = ปัญหา pivot · angle ≈ 180 = แกนกลับด้าน · fit_rms สูง = shape ต่างด้วย (scale หรือลำดับ point ไม่ตรง)
 ทางไม่ต้องเขียนโค้ด: Extract Transform SOP (input 1 = ตัวถูก, input 2 = ตัวที่เช็ค)
 
-### add_orient_from_cache.py — Recompute orient from a cache → LOP PointInstancer
+### add_orient_from_cache.py — Recompute orient from a cache (packed or polygons) → LOP PointInstancer
 
 - Where: Python Shell
-- Tested: Houdini 21.0.671 · empty scene (fracture + bullet / packed / spin) + Plug's rbd_root_copy
+- Tested: Houdini 21.0.671 · empty scene (polygons / packed prim name / packed point name / packed spin) + Plug's no_unpack
 
-มีแค่ cache ของชิ้น (polygon หรือ packed ที่มี name) ไม่มี sim points: สร้าง point ต่อชิ้นพร้อม orient ใหม่ด้วย Extract Transform แล้ว instance ใน LOP ตั้ง CACHE_NODE กับ REST_FRAME แล้วรัน
+มีแค่ cache ของชิ้นไม่มี sim points: สร้าง point ต่อชิ้นพร้อม orient แล้ว instance ใน LOP ถ้า cache เป็น packed จะอ่าน packedfulltransform ตรง ๆ ไม่ unpack ทุกเฟรม (unpack แค่เฟรม rest ทำ prototype) ถ้าเป็น polygon ใช้ Extract Transform ตั้ง CACHE_NODE กับ REST_FRAME แล้วรัน
 
-สร้าง ORIENT_rest (timeshift ที่ REST_FRAME) → ORIENT_extract → ORIENT_points (ลบ pivot, ชื่อแบบ USD) → OUT_orient_points และ ORIENT_protos (ชิ้น rest เลื่อน -pivot ไป origin) → ORIENT_protos_path → OUT_orient_protos
-ADD_LOP = True สร้าง LOP_orient_instancing (sopimport root_pieces → instancer1 → OUT_instances) และ LOP_orient_check_import → LOP_orient_check_unpackusd กลับมาเช็คใน SOP
-REST_FRAME ต้องเป็นเฟรมที่ชิ้นยังไม่ขยับ orient คือการหมุนเทียบกับเฟรมนั้น
+packed: ORIENT_rest → PACKED_protos_origin → PACKED_protos_unpack → ORIENT_protos_path → OUT_orient_protos และ PACKED_points → OUT_orient_points
+polygon: ORIENT_rest → ORIENT_extract → ORIENT_points / ORIENT_protos → OUT_*
+ADD_LOP = True สร้าง LOP_orient_instancing และ LOP_orient_check_unpackusd ไว้เช็คใน SOP
+ชื่อชิ้นถูกแก้ให้ USD รับ (piece0-0-0 → piece0_0_0) ทั้งฝั่ง point และ prototype
+REST_FRAME ต้องเป็นเฟรมที่ชิ้นยังไม่ขยับ

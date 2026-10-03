@@ -1,16 +1,19 @@
 # ============================================================================
 # Recompute orient from a cache -> LOP PointInstancer   (paste into Houdini Python Shell)
 #
-# For when all you have is the CACHED geometry of the sim (a File Cache of the
-# transformed pieces, polygons with a piece name) and no sim points. Rebuilds
-# one point per piece with P + orient by comparing every frame to the rest
-# frame (Extract Transform, Use Piece Attribute), then instances the rest
-# pieces on those points in LOPs.
+# For when all you have is the CACHED geometry of the sim and no sim points.
+# Rebuilds one point per piece with P + orient, then instances the rest pieces
+# on those points in LOPs. Two modes, picked from the cache itself:
+#   - PACKED cache (heavy RBD): orient + scale come straight from each packed
+#     prim's packedfulltransform. Nothing is unpacked per frame; only the rest
+#     frame is unpacked once for the prototypes.
+#   - POLYGON cache (unpacked pieces with a name): Extract Transform with Use
+#     Piece Attribute compares every frame to the rest frame.
 #
 # The two things that make it wrong if left alone:
-#   - Prototypes must sit at the origin. Extract Transform puts P on the piece
-#     centre and returns pivot = rest centre, so the rest pieces are moved by
-#     -pivot and pivot is dropped from the points.
+#   - Prototypes must sit at the origin, around the pivot the points rotate
+#     about: packed -> the prim's own pivot (transform set to identity, P = 0,
+#     then unpack); polygons -> Extract Transform's pivot (rest centre).
 #   - USD prim names cannot hold "-" (piece0-0-0 becomes piece0_0_0), so the
 #     instancer finds no prototype by name and skips every instance. Both
 #     sides get the same cleaned name.
@@ -18,15 +21,15 @@
 # HOW TO USE
 #   1. Open the Geometry network that holds the cache (or set TARGET).
 #   2. Set CACHE_NODE (and REST_FRAME), paste into Windows > Python Shell.
-#   New nodes are created (ORIENT_*, LOP_*); existing nodes are not changed.
+#   New nodes are created (ORIENT_* / PACKED_*, LOP_*); existing nodes are not changed.
 # ============================================================================
 
 import hou
 
 # ----------------------------- CONFIG ---------------------------------------
 TARGET       = ""            # "" = the network the Network Editor is showing
-CACHE_NODE   = "filecache1"  # cached sim: polygons (or packed) with a piece name
-PIECE_ATTR   = "name"        # primitive attribute that names each piece
+CACHE_NODE   = "filecache1"  # cached sim: packed prims, or polygons, with a piece name
+PIECE_ATTR   = "name"        # attribute that names each piece (prim, or point on packed)
 REST_FRAME   = 1             # frame where the pieces are at rest (not yet moved)
 ADD_LOP      = True          # also build the LOP PointInstancer + a check back in SOPs
 # ----------------------------------------------------------------------------
@@ -58,8 +61,9 @@ cache = find(CACHE_NODE, net)
 geo = cache.geometry()
 if geo is None:
     raise hou.Error("%s has no geometry (cook error?): %s" % (cache.path(), "; ".join(cache.errors())))
-if geo.findPrimAttrib(PIECE_ATTR) is None:
-    raise hou.Error("%s has no primitive attribute %r - set PIECE_ATTR." % (cache.path(), PIECE_ATTR))
+PACKED = any(isinstance(p, hou.PackedPrim) for p in geo.prims())
+if geo.findPrimAttrib(PIECE_ATTR) is None and not (PACKED and geo.findPointAttrib(PIECE_ATTR)):
+    raise hou.Error("%s has no %r attribute on its pieces - set PIECE_ATTR." % (cache.path(), PIECE_ATTR))
 
 ys = [c.position()[1] for c in net.children()]
 top = min(ys) - 2
@@ -74,54 +78,85 @@ def mk(type_name, name, x, y, parent=None):
     return n
 
 
-src = cache
-if any(isinstance(p, hou.PackedPrim) for p in geo.prims()):
-    src = mk("unpack", "ORIENT_unpack", 0, 0)                # Extract Transform needs the points
-    src.setInput(0, cache)
-    src.parm("transfer_attributes").set(PIECE_ATTR)
+CLEAN_NAME = r"""
+// USD prim names allow only letters, digits and _ (piece0-0-0 -> piece0_0_0)
+nm = re_replace("[^A-Za-z0-9_]", "_", nm);
+if (re_match("^[0-9]", nm)) nm = "_" + nm;
+"""
+A = {"a": PIECE_ATTR, "clean": CLEAN_NAME}
 
 rest = mk("timeshift", "ORIENT_rest", -3, -1.2)              # the pieces at rest
-rest.setInput(0, src)
+rest.setInput(0, cache)
 rest.parm("frame").deleteAllKeyframes()
 rest.parm("frame").set(REST_FRAME)
 
-ext = mk("extracttransform", "ORIENT_extract", 0, -2.4)      # one point per piece: P orient pivot name
-ext.setInput(0, rest)
-ext.setInput(1, src)
-ext.parm("usepieceattrib").set(1)
-ext.parm("pieceattrib").set(PIECE_ATTR)
-ext.parm("pieceattribclass").set(0)                          # Primitive
+if PACKED:
+    # every frame: one point per packed prim, nothing unpacked
+    pts = mk("attribwrangle", "PACKED_points", 0, -2.4)
+    pts.setInput(0, cache)
+    pts.parm("snippet").set(r"""
+// orient (+ scale) straight from the packed prim; P is already the moved pivot
+int pr = pointprims(0, @ptnum)[0];
+matrix m4 = primintrinsic(0, "packedfulltransform", pr);   // read as 4x4 first: matrix3(primintrinsic(..))
+matrix3 m = matrix3(m4);                                   // would read the 16 values as a 3x3
+vector s = set(length(set(m.xx, m.xy, m.xz)), length(set(m.yx, m.yy, m.yz)), length(set(m.zx, m.zy, m.zz)));
+scale(m, 1.0 / s);
+p@orient = quaternion(m);
+v@scale = s;   // write on EVERY point: a partial write leaves 0 (instance vanishes) elsewhere
+string nm = haspointattrib(0, "%(a)s") ? point(0, "%(a)s", @ptnum) : prim(0, "%(a)s", pr);
+%(clean)s
+s@%(a)s = nm;
+removeprim(0, pr, 0);
+""" % A)
+    # rest frame only: drop the packed transform -> unpack gives (piece - pivot)
+    zero = mk("attribwrangle", "PACKED_protos_origin", -3, -2.4)
+    zero.setInput(0, rest)
+    zero.parm("snippet").set(r"""
+int pr = pointprims(0, @ptnum)[0];
+matrix3 I = ident();
+setprimintrinsic(0, "transform", pr, I);
+v@P = {0, 0, 0};
+""")
+    protos = mk("unpack", "PACKED_protos_unpack", -3, -3.6)  # cooks once (rest frame only)
+    protos.setInput(0, zero)
+    protos.parm("transfer_attributes").set(PIECE_ATTR)
+else:
+    ext = mk("extracttransform", "ORIENT_extract", 0, -2.4)  # one point per piece: P orient pivot name
+    ext.setInput(0, rest)
+    ext.setInput(1, cache)
+    ext.parm("usepieceattrib").set(1)
+    ext.parm("pieceattrib").set(PIECE_ATTR)
+    ext.parm("pieceattribclass").set(0)                      # Primitive
 
-pts = mk("attribwrangle", "ORIENT_points", 0, -3.6)
-pts.setInput(0, ext)
-pts.parm("snippet").set(r'''
+    pts = mk("attribwrangle", "ORIENT_points", 0, -3.6)
+    pts.setInput(0, ext)
+    pts.parm("snippet").set(r"""
 // prototypes are centred at the origin, so pivot is not needed any more
 removepointattrib(0, "pivot");
-// USD prim names allow only letters, digits and _ (piece0-0-0 -> piece0_0_0)
-string nm = re_replace("[^A-Za-z0-9_]", "_", s@%(a)s);
-if (re_match("^[0-9]", nm)) nm = "_" + nm;
+string nm = s@%(a)s;
+%(clean)s
 s@%(a)s = nm;
-''' % {"a": PIECE_ATTR})
+""" % A)
 
-protos = mk("attribwrangle", "ORIENT_protos", -3, -3.6)      # rest pieces, each at the origin
-protos.setInput(0, rest)
-protos.setInput(1, ext)
-protos.parm("snippet").set(r'''
+    protos = mk("attribwrangle", "ORIENT_protos", -3, -3.6)  # rest pieces, each at the origin
+    protos.setInput(0, rest)
+    protos.setInput(1, ext)
+    protos.parm("snippet").set(r"""
 // move every rest point by its piece's pivot so the piece sits at the origin
 int pr = pointprims(0, @ptnum)[0];
 string piece = prim(0, "%(a)s", pr);
 int ip = findattribval(1, "point", "%(a)s", piece);
 v@P -= point(1, "pivot", ip);
-''' % {"a": PIECE_ATTR})
+""" % A)
 
 path = mk("attribwrangle", "ORIENT_protos_path", -3, -4.8)   # one USD prim per piece, same clean name
 path.setInput(0, protos)
 path.parm("class").set(1)                                    # Primitives
-path.parm("snippet").set(r'''
-string nm = re_replace("[^A-Za-z0-9_]", "_", s@%(a)s);
-if (re_match("^[0-9]", nm)) nm = "_" + nm;
+path.parm("snippet").set(r"""
+string nm = s@%(a)s;
+%(clean)s
 s@path = nm;
-''' % {"a": PIECE_ATTR})
+""" % A)
 
 t_out = mk("null", "OUT_orient_points", 0, -6)
 t_out.setInput(0, pts)
@@ -156,6 +191,6 @@ if ADD_LOP:
     uu.parm("output").set("polygons")
     uu.parm("iterations").set(2)                             # instancer -> instances -> meshes
 
-print("Orient from cache built in %s (%d nodes) -> %s, %s%s" % (
-    net.path(), len(created), t_out.name(), p_out.name(),
+print("Orient from %s cache built in %s (%d nodes) -> %s, %s%s" % (
+    "packed" if PACKED else "polygon", net.path(), len(created), t_out.name(), p_out.name(),
     (" + LOP_orient_instancing" if ADD_LOP else "")))
