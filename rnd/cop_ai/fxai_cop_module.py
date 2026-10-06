@@ -49,9 +49,38 @@ def _token():
 
 
 # ------------------------------------------------------------------ angle
+# ------------------------------------------------------------------ prompt wrangles
+def _is_prompt_node(n):
+    """A Wrangle wired into FX AI Generate is a prompt, not an image."""
+    return "wrangle" in n.type().name() and (n.parm("vexsnippet") or n.parm("snippet")) is not None
+
+
+def prompt_text(n):
+    """The Wrangle's snippet as prompt text. Plain text works (the Wrangle shows a VEX error, the
+    generator doesn't care); writing it as // comment lines keeps the Wrangle error-free."""
+    raw = (n.parm("vexsnippet") or n.parm("snippet")).eval()
+    lines = []
+    for line in raw.replace("/*", "").replace("*/", "").splitlines():
+        line = line.strip()
+        if line.startswith("//"):
+            line = line[2:].strip()
+        if line:
+            lines.append(line)
+    return " ".join(lines)
+
+
+def _connections(node):
+    return sorted(node.inputConnections(), key=lambda c: c.inputIndex())
+
+
+def _image_connections(node):
+    return [c for c in _connections(node) if not _is_prompt_node(c.inputNode())]
+
+
 def _angle_nodes(node):
-    """FX AI Angle nodes upstream of input 0, nearest first."""
-    out, seen, cur = [], set(), node.inputs()[0] if node.inputs() else None
+    """FX AI Angle nodes upstream of the first image input, nearest first."""
+    imgs = _image_connections(node)
+    out, seen, cur = [], set(), imgs[0].inputNode() if imgs else None
     while cur is not None and cur.sessionId() not in seen:
         seen.add(cur.sessionId())
         if "fxai_angle" in cur.type().name():
@@ -92,7 +121,8 @@ def angle_text(a):
 
 
 def build_prompt(node):
-    p = node.evalParm("prompt").strip()
+    wired = [prompt_text(c.inputNode()) for c in _connections(node) if _is_prompt_node(c.inputNode())]
+    p = " ".join([t for t in wired if t] + [node.evalParm("prompt").strip()]).strip()
     angles = [t for t in (angle_text(a) for a in reversed(_angle_nodes(node))) if t]
     if angles:
         p += (" Re-render this EXACT same scene and the EXACT same subject, photographed from a "
@@ -139,7 +169,7 @@ def _write_png(layer, path):
 
 def _export_inputs(node, d):
     files = []
-    for i, con in enumerate(node.inputConnections() and sorted(node.inputConnections(), key=lambda c: c.inputIndex())):
+    for con in _image_connections(node):
         src = con.inputNode()
         lay = src.layer(con.outputIndex())
         if lay is None:
@@ -147,8 +177,8 @@ def _export_inputs(node, d):
         path = os.path.join(d, "in_%d.png" % con.inputIndex()).replace("\\", "/")
         _write_png(lay, path)
         files.append(path)
-    if not files or not node.inputs() or node.inputs()[0] is None:
-        raise hou.Error("Wire an image into the first input.")
+    if not files:
+        raise hou.Error("Wire an image in (a Wrangle counts as the prompt, not an image).")
     return files
 
 

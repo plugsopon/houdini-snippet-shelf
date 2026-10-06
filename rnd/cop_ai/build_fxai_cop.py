@@ -4,7 +4,8 @@
 
 Writes:
   ~/Documents/houdini21.0/otls/cop_fxai.hdanc   - FX AI Angle + FX AI Generate (loads on next Houdini start)
-  <repo>/hip/cop_ai/fxai_cop_demo.hipnc          - File -> FX AI Angle -> FX AI Generate
+  <repo>/hip/cop_ai/fxai_cop_demo_v2.hipnc       - File -> FX AI Angle -> FX AI Generate <- Prompt (Wrangle)
+  (never overwrites an existing hip: Plug may have it open and edited)
 """
 import os
 import shutil
@@ -29,7 +30,8 @@ def subnet(net, name, n_in):
     s.parm("inputs").set(n_in)
     s.parm("outputs").set(1)
     for i in range(n_in):
-        s.parm("inputlabel%d" % (i + 1)).set("image" if i == 0 else "ref %d" % i)
+        s.parm("inputlabel%d" % (i + 1)).set(
+            "image" if i == 0 else "prompt" if (n_in > 2 and i == n_in - 1) else "ref %d" % i)
         s.parm("inputtype%d" % (i + 1)).set(4)          # RGBA
     s.parm("outputlabel1").set("image")
     s.parm("outputtype1").set(4)
@@ -84,7 +86,7 @@ def build_angle(net):
 
 
 def build_generate(net):
-    s = subnet(net, "fxai_generate_build", 4)
+    s = subnet(net, "fxai_generate_build", 5)          # image, ref 1-3, prompt (any Wrangle)
     res = s.createNode("file", "result")
     res.parm("aovs").set(1); res.parm("aov1").set("C"); res.parm("type1").set(2)   # fixed RGB output, file or not
     res.parm("filename").setExpression('chs("../result_file")', hou.exprLanguage.Hscript)
@@ -145,7 +147,10 @@ def main():
         os.remove(OTL)
     os.makedirs(HIPDIR, exist_ok=True)
     hou.hipFile.clear(suppress_save_prompt=True)
-    hou.hipFile.setName(HIPDIR + "/fxai_cop_demo.hipnc")
+    hip = HIPDIR + "/fxai_cop_demo_v2.hipnc"
+    if os.path.exists(hip) and "--force" not in sys.argv:
+        raise SystemExit("%s exists - not overwriting (pass --force for a scratch copy you own)" % hip)
+    hou.hipFile.setName(hip)
 
     net = hou.node("/obj").createNode("copnet", "fxai_cop")
     angle = build_angle(net); angle.destroy()
@@ -163,7 +168,9 @@ def main():
     a.parm("azimuth").set(45); a.parm("elevation").set(15)
     g = net.createNode("fxai_generate", "seedance_gen")
     g.setInput(0, a, 0)
-    g.parm("prompt").set("The reference image shows a cosmetic product on a set.")
+    w = net.createNode("wrangle", "Prompt")       # type the prompt here; // lines keep VEX happy
+    w.parm("vexsnippet").set("// The reference image shows a cosmetic product on a set.")
+    g.setInput(4, w, 0)
     g.setDisplayFlag(True)
     net.layoutChildren()
     hou.hipFile.save()
