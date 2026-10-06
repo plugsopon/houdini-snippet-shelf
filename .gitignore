@@ -13,3 +13,6 @@ hip/**/galleries/
 *.bgeo.sc
 *.bgeo
 *.abc
+
+# FX AI COP job outputs (inputs + generated results)
+hip/*/fxai_cop/
