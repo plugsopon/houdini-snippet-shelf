@@ -393,42 +393,61 @@ class ClaudeSession(QtCore.QObject):
 
 # =========================================================================== widgets
 CSS = """
-#panel { background: #141418; border: 1px solid #34343c; border-radius: 12px; }
-#side { background: #101014; border-right: 1px solid #26262c;
+* { font-family: "Leelawadee UI"; }
+#panel { background: #262624; border: 1px solid #3a3935; border-radius: 12px; }
+#side { background: #1f1e1d; border-right: 1px solid #2f2e2b;
         border-top-left-radius: 11px; border-bottom-left-radius: 11px; }
-QLabel { color: #d8d8de; font-size: 12px; }
-QLabel#title { color: #fff; font-size: 15px; font-weight: 700; }
-QLabel#dim { color: #80808c; font-size: 11px; }
-QPushButton { background: #24242a; color: #e6e6ea; border: 1px solid #36363e; border-radius: 6px;
-              padding: 5px 10px; font-size: 12px; }
-QPushButton:hover { border-color: #6a6a78; }
-QPushButton#primary { background: #ffffff; color: #000; border-color: #fff; font-weight: 700; }
-QPushButton#stop { background: #3a1016; color: #ff8a9a; border-color: #6a1a26; font-weight: 700; }
-QPushButton#flat { background: transparent; border: none; color: #9a9aa6; padding: 3px 6px; }
-QPushButton#flat:hover { color: #fff; }
-QComboBox { background: #1c1c22; color: #e6e6ea; border: 1px solid #36363e; border-radius: 6px;
-            padding: 3px 8px; font-size: 12px; }
-QComboBox QAbstractItemView { background: #1c1c22; color: #e6e6ea; selection-background-color: #2e2e38; }
-QListWidget { background: transparent; border: none; color: #c8c8d0; font-size: 12px; }
-QListWidget::item { padding: 7px 8px; border-radius: 6px; }
-QListWidget::item:selected { background: #26262e; color: #fff; }
-QListWidget::item:hover { background: #1c1c22; }
-QPlainTextEdit#composer { background: transparent; color: #fff; border: none; padding: 2px; font-size: 13px; }
-QFrame#composerBox { background: #1b1b20; border: 1px solid #34343c; border-radius: 12px; }
-QFrame#ctxStrip { background: #17171b; border: 1px solid #2a2a31; border-radius: 10px; }
-QPushButton#bar { background: transparent; border: none; color: #c8c8d0; padding: 4px 8px; border-radius: 6px; font-size: 12px; }
-QPushButton#bar:hover { background: #26262e; color: #fff; }
-QPushButton#round { background: #2a2a31; color: #e6e6ea; border: none; border-radius: 14px; font-size: 14px; }
-QPushButton#round:hover { background: #3a3a44; }
-QPushButton#send { background: #ffffff; color: #000; border: none; border-radius: 14px; font-size: 14px; font-weight: 700; }
-QPushButton#send:disabled { background: #3a3a42; color: #77777f; }
-QPushButton#stopr { background: #ffffff; color: #000; border: none; border-radius: 14px; font-size: 11px; }
+#titlebar { border-bottom: 1px solid #2f2e2b; }
+QLabel { color: #ece9e3; font-size: 13px; }
+QLabel#brand { color: #ece9e3; font-size: 15px; font-weight: 600; }
+QLabel#brandmark { color: #ff4f9a; font-size: 15px; font-weight: 700; }
+QLabel#title { color: #ece9e3; font-size: 13px; font-weight: 600; }
+QLabel#section { color: #77756f; font-size: 12px; }
+QLabel#dim { color: #77756f; font-size: 12px; }
+QLabel#chip { background: #30302e; color: #a6a39d; border-radius: 6px; padding: 1px 8px; font-size: 12px; }
+QLabel#kbd { color: #77756f; border: 1px solid #3a3935; border-radius: 5px; padding: 0 5px; font-size: 11px; }
+QPushButton { background: #30302e; color: #ece9e3; border: 1px solid #3a3935; border-radius: 8px;
+              padding: 5px 10px; font-size: 13px; }
+QPushButton:hover { background: #353532; border-color: #4a4944; }
+QPushButton#primary { background: #ece9e3; color: #1c1b1a; border-color: #ece9e3; font-weight: 600; }
+QPushButton#stop { background: #3a1e1c; color: #e5675f; border-color: #6a2b26; font-weight: 600; }
+QPushButton#flat { background: transparent; border: none; color: #a6a39d; padding: 3px 6px; }
+QPushButton#flat:hover { color: #ece9e3; background: #353532; }
+QPushButton#nav { background: transparent; border: none; color: #ece9e3; text-align: left;
+                  padding: 6px 10px; border-radius: 8px; font-size: 13px; }
+QPushButton#nav:hover { background: #353532; }
+QPushButton#icon { background: transparent; border: none; color: #a6a39d; border-radius: 7px;
+                   padding: 0; font-size: 14px; min-width: 28px; min-height: 28px; }
+QPushButton#icon:hover { background: #353532; color: #ece9e3; }
+QComboBox { background: #30302e; color: #ece9e3; border: 1px solid #3a3935; border-radius: 8px;
+            padding: 3px 8px; font-size: 13px; }
+QComboBox QAbstractItemView { background: #2a2927; color: #ece9e3; selection-background-color: #353532; }
+QListWidget { background: transparent; border: none; color: #ece9e3; font-size: 13px; outline: 0; }
+QListWidget::item { border-radius: 8px; margin: 1px 0; }
+QListWidget::item:selected { background: #30302e; }
+QListWidget::item:hover { background: #353532; }
+QPlainTextEdit#composer { background: transparent; color: #ece9e3; border: none; padding: 2px; font-size: 14px; }
+QFrame#composerBox { background: #30302e; border: 1px solid #3a3935; border-radius: 16px; }
+QFrame#ctxStrip { background: #1f1e1d; border: 1px solid #2f2e2b; border-bottom: none;
+                  border-top-left-radius: 12px; border-top-right-radius: 12px; }
+QPushButton#bar { background: transparent; border: none; color: #a6a39d; padding: 4px 8px; border-radius: 7px; font-size: 13px; }
+QPushButton#bar:hover { background: #353532; color: #ece9e3; }
+QPushButton#round { background: #30302e; color: #ece9e3; border: none; border-radius: 15px; font-size: 14px; }
+QPushButton#round:hover { background: #353532; }
+QPushButton#send { background: #ece9e3; color: #1c1b1a; border: none; border-radius: 15px; font-size: 15px; font-weight: 700; }
+QPushButton#send:disabled { background: #3a3935; color: #77756f; }
+QPushButton#stopr { background: #30302e; color: #ece9e3; border: 1px solid #3a3935; border-radius: 15px; font-size: 11px; }
 QScrollArea { background: transparent; border: none; }
-QTextBrowser { background: transparent; border: none; color: #e4e4ea; font-size: 13px; }
-QFrame#user { background: #22222a; border-radius: 10px; }
-QFrame#card { background: #18181e; border: 1px solid #2c2c34; border-radius: 8px; }
-QFrame#perm { background: #1e1a10; border: 1px solid #6a5418; border-radius: 8px; }
-QFrame#think { background: transparent; border-left: 2px solid #3a3a46; }
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: #3d3c38; border-radius: 4px; min-height: 30px; margin: 2px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
+QTextBrowser { background: transparent; border: none; color: #ece9e3; font-size: 14px; }
+QFrame#user { background: #30302e; border-radius: 14px; }
+QFrame#card { background: transparent; border: none; }
+QFrame#card QLabel { color: #a6a39d; }
+QFrame#perm { background: #1f1e1d; border: 1px solid #3a3935; border-radius: 12px; }
+QFrame#think { background: transparent; border: none; }
 """
 MONO = "Consolas, 'Cascadia Mono', monospace"
 
@@ -473,15 +492,15 @@ class AutoText(QtWidgets.QTextBrowser):
             lang, code = m.group(1).strip(), m.group(2)
             self._codes.append(code)
             out.append(
-                "<table width='100%%' cellspacing='0' cellpadding='0' bgcolor='#0c0c0f' "
-                "style='margin-top:6px;margin-bottom:6px;border:1px solid #2c2c34;'>"
-                "<tr><td bgcolor='#17171c' style='padding:4px 10px;'>"
+                "<table width='100%%' cellspacing='0' cellpadding='0' bgcolor='#1c1b1a' "
+                "style='margin-top:6px;margin-bottom:10px;border:1px solid #2f2e2b;'>"
+                "<tr><td bgcolor='#1c1b1a' style='padding:5px 12px;border-bottom:1px solid #2f2e2b;'>"
                 "<table width='100%%' cellspacing='0' cellpadding='0'><tr>"
-                "<td><span style='color:#8a8a94;font-size:11px;'>%s</span></td>"
-                "<td align='right'><a href='copy:%d' style='color:#9ab4ff;font-size:11px;"
+                "<td><span style='color:#77756f;font-size:11px;'>%s</span></td>"
+                "<td align='right'><a href='copy:%d' style='color:#6aa5ff;font-size:11px;"
                 "text-decoration:none;'>Copy</a></td></tr></table>"
                 "</td></tr><tr><td style='padding:8px 10px;'>"
-                "<pre style='font-family:Consolas,\"Cascadia Mono\",monospace;font-size:12px;color:#e6e6ea;"
+                "<pre style='font-family:Consolas,\"Cascadia Mono\",monospace;font-size:12px;color:#ece9e3;"
                 "margin:0;'>%s</pre></td></tr></table>" % (_esc(lang or "code"), len(self._codes) - 1, _esc(code)))
             pos = m.end()
         out.append(_md_html(text[pos:]))
@@ -522,7 +541,7 @@ def _md_html(md):
     h = d.toHtml()
     for fam in {fixed, "monospace", "Courier New"}:
         h = h.replace("font-family:'%s';" % fam,
-                      "font-family:'Consolas'; background-color:#2a2a32; color:#f0c6d4;")
+                      "font-family:'Consolas'; background-color:#30302e; color:#f0c6d4;")
     i, j = h.find("<body"), h.rfind("</body>")
     return h[h.find(">", i) + 1:j] if i >= 0 and j > i else h
 
@@ -546,25 +565,37 @@ class ToolCard(QtWidgets.QFrame):
         self.name, self.tool_id, self.partial = name, tool_id, ""
         lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(10, 6, 10, 6); lay.setSpacing(4)
         head = QtWidgets.QHBoxLayout(); lay.addLayout(head)
-        self.dot = QtWidgets.QLabel("●"); self.dot.setStyleSheet("color:#e6b422;")
+        self.dot = QtWidgets.QLabel("●"); self.dot.setStyleSheet("color:#d9a548;font-size:9px;")
         head.addWidget(self.dot)
         label = name.replace("mcp__houdini-live__", "houdini:").replace("mcp__", "")
-        self.title = QtWidgets.QLabel("<b>%s</b>" % label)
+        self.title = QtWidgets.QLabel(label); self.title.setStyleSheet("color:#a6a39d;font-size:13px;")
         head.addWidget(self.title)
         self.summary = QtWidgets.QLabel(""); self.summary.setObjectName("dim")
+        self.summary.setStyleSheet("color:#77756f;font-family:Consolas;font-size:12px;")
         head.addWidget(self.summary, 1)
-        self.toggle = QtWidgets.QPushButton("details", objectName="flat"); head.addWidget(self.toggle)
+        self.toggle = QtWidgets.QPushButton("›", objectName="flat"); head.addWidget(self.toggle)
+        self.toggle.setToolTip("Show the input and the result")
         self.body = QtWidgets.QWidget(); self.body.hide()
         bl = QtWidgets.QVBoxLayout(self.body); bl.setContentsMargins(0, 0, 0, 0); bl.setSpacing(4)
-        self.input_view = AutoText(mono=True, color="#b8b8c4"); bl.addWidget(self.input_view)
-        self.result_view = AutoText(mono=True, color="#9ad0a0"); self.result_view.hide(); bl.addWidget(self.result_view)
+        self.input_view = AutoText(mono=True, color="#a6a39d"); bl.addWidget(self.input_view)
+        self.result_view = AutoText(mono=True, color="#5fb87a"); self.result_view.hide(); bl.addWidget(self.result_view)
         lay.addWidget(self.body)
         self.extra = QtWidgets.QWidget()                      # diffs / todos show here, always open
         self.extra_lay = QtWidgets.QVBoxLayout(self.extra); self.extra_lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.extra); self.extra.hide()
-        self.toggle.clicked.connect(lambda: self.body.setVisible(not self.body.isVisible()))
+        self.toggle.clicked.connect(self._flip)
         if depth:
             self.setStyleSheet("QFrame#card{margin-left:%dpx;}" % (18 * depth))
+
+    def _flip(self):
+        on = not self.body.isVisible()
+        self.body.setVisible(on)
+        self.toggle.setText("⌄" if on else "›")
+
+    def mousePressEvent(self, e):            # click anywhere on the line, like Dremzo Code's .step
+        if e.position().y() < 26:
+            self._flip()
+        super().mousePressEvent(e)
 
     def add_partial(self, s):
         self.partial += s
@@ -626,9 +657,9 @@ class ToolCard(QtWidgets.QFrame):
             if src and src.get("type") == "base64":
                 self._add_image(src.get("data", ""))
         self.result_view.set_text(text[:6000] + ("\n..." if len(text) > 6000 else ""))
-        self.result_view.setStyleSheet("color:%s;" % ("#ff9aa6" if is_error else "#9ad0a0"))
+        self.result_view.setStyleSheet("color:%s;" % ("#e5675f" if is_error else "#5fb87a"))
         self.result_view.show()
-        self.dot.setStyleSheet("color:%s;" % ("#ff5a6a" if is_error else "#3ad07a"))
+        self.dot.setStyleSheet("color:%s;" % ("#e5675f" if is_error else "#5fb87a"))
 
 
 def _esc(s):
@@ -667,7 +698,7 @@ class _Card(QtWidgets.QFrame):
     def expire(self, why="Expired - the turn ended before an answer"):
         if self.live:
             self.done(why)
-            self.setStyleSheet("QFrame#perm{border-color:#3a3a42;background:#16161a;}")
+            self.setStyleSheet("QFrame#perm{border-color:#3a3935;background:#1f1e1d;}")
 
 
 SUGG_WHERE = {"session": "this session", "localSettings": "this project, saved to .claude/settings.local.json",
@@ -697,7 +728,7 @@ class PermissionCard(_Card):
             b.setToolTip("Remembered for: " + where)
         self.button(row, "Deny", lambda: self.send(False, "Denied", message=self.fb.text().strip()))
         self.fb = QtWidgets.QLineEdit(); self.fb.setPlaceholderText("or tell Brother what to do instead, then Deny")
-        self.fb.setStyleSheet("background:#0d0d10;color:#ddd;border:1px solid #36363e;border-radius:6px;padding:4px;")
+        self.fb.setStyleSheet("background:#1f1e1d;color:#ece9e3;border:1px solid #3a3935;border-radius:6px;padding:4px;")
         self.fb.returnPressed.connect(lambda: self.send(False, "Denied", message=self.fb.text().strip()))
         row.addWidget(self.fb, 1)
 
@@ -712,13 +743,13 @@ class QuestionCard(_Card):
         for q in inp.get("questions") or []:
             box = QtWidgets.QFrame(); bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(0, 4, 0, 4); bl.setSpacing(3)
             head = q.get("header")
-            t = QtWidgets.QLabel(("<span style='color:#ffb84d'>%s</span>  " % _esc(head) if head else "") + _esc(q.get("question", "")))
+            t = QtWidgets.QLabel(("<span style='color:#d9a548'>%s</span>  " % _esc(head) if head else "") + _esc(q.get("question", "")))
             t.setWordWrap(True); bl.addWidget(t)
             group = QtWidgets.QButtonGroup(box); group.setExclusive(not q.get("multiSelect"))
             opts = []
             for o in q.get("options") or []:
                 w = (QtWidgets.QCheckBox if q.get("multiSelect") else QtWidgets.QRadioButton)(o.get("label", ""))
-                w.setStyleSheet("color:#e6e6ea;")
+                w.setStyleSheet("color:#ece9e3;")
                 if o.get("description"):
                     w.setToolTip(o["description"])
                 group.addButton(w); bl.addWidget(w); opts.append(w)
@@ -726,7 +757,7 @@ class QuestionCard(_Card):
                     dl = QtWidgets.QLabel(_esc(o["description"])); dl.setObjectName("dim"); dl.setWordWrap(True)
                     dl.setContentsMargins(22, 0, 0, 0); bl.addWidget(dl)
             other = QtWidgets.QLineEdit(); other.setPlaceholderText("Other...")
-            other.setStyleSheet("background:#0d0d10;color:#ddd;border:1px solid #36363e;border-radius:6px;padding:4px;")
+            other.setStyleSheet("background:#1f1e1d;color:#ece9e3;border:1px solid #3a3935;border-radius:6px;padding:4px;")
             bl.addWidget(other)
             self.lay.addWidget(box)
             self.qs.append((q, opts, other))
@@ -766,7 +797,7 @@ class PlanCard(_Card):
         self.button(row, "Keep planning", lambda: self.send(
             False, "Keep planning", message=self.fb.text().strip() or "Plug wants to keep planning."))
         self.fb = QtWidgets.QLineEdit(); self.fb.setPlaceholderText("what to change in the plan...")
-        self.fb.setStyleSheet("background:#0d0d10;color:#ddd;border:1px solid #36363e;border-radius:6px;padding:4px;")
+        self.fb.setStyleSheet("background:#1f1e1d;color:#ece9e3;border:1px solid #3a3935;border-radius:6px;padding:4px;")
         row.addWidget(self.fb, 1)
 
 
@@ -842,8 +873,15 @@ class Convo(QtCore.QObject):
         self.follow = True
         self.scroll = QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        host = QtWidgets.QWidget(); host.setStyleSheet("background:transparent;")
-        self.feed = QtWidgets.QVBoxLayout(host); self.feed.setContentsMargins(0, 0, 6, 0); self.feed.setSpacing(8)
+        host = QtWidgets.QWidget(objectName="feedhost")
+        # a bare "background:transparent;" here cascades to every child and wiped the user bubble's fill
+        host.setStyleSheet("QWidget#feedhost{background:transparent;}")
+        # one 760px column in the middle, like Dremzo Code's .log-inner
+        hl = QtWidgets.QHBoxLayout(host); hl.setContentsMargins(0, 0, 0, 0); hl.setSpacing(0)
+        col = QtWidgets.QWidget(); col.setMaximumWidth(760)
+        col.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        hl.addStretch(1); hl.addWidget(col, 100); hl.addStretch(1)
+        self.feed = QtWidgets.QVBoxLayout(col); self.feed.setContentsMargins(28, 24, 28, 40); self.feed.setSpacing(14)
         self.feed.addStretch(1)
         self.scroll.setWidget(host)
         sb = self.scroll.verticalScrollBar()
@@ -892,7 +930,7 @@ class Convo(QtCore.QObject):
                 self.sid = self.session.session_id
             # a fork gets its new id from system/init; after that it is a normal session
         except RuntimeError as e:
-            self.add_note(str(e), "#ff8a9a")
+            self.add_note(str(e), "#e5675f")
 
     def park(self):
         """Leaving an idle conversation: end its process (it resumes on the next message).
@@ -948,14 +986,17 @@ class Convo(QtCore.QObject):
         self.feed.insertWidget(self.feed.count() - 1, w)
         return w
 
-    def add_note(self, text, color="#80808c"):
+    def add_note(self, text, color="#77756f"):
         l = QtWidgets.QLabel(text); l.setWordWrap(True); l.setStyleSheet("color:%s;font-size:11px;" % color)
         return self._add(l)
 
     def add_user(self, text, n_images=0, uuid_=None):
         f = QtWidgets.QFrame(objectName="user")
-        lay = QtWidgets.QVBoxLayout(f); lay.setContentsMargins(12, 8, 12, 4); lay.setSpacing(0)
-        lay.addWidget(AutoText(text + (("\n\n*+%d image(s)*" % n_images) if n_images else ""), color="#ffffff"))
+        lay = QtWidgets.QVBoxLayout(f); lay.setContentsMargins(14, 9, 14, 4); lay.setSpacing(0)
+        body = AutoText(text + (("\n\n*+%d image(s)*" % n_images) if n_images else ""), color="#ece9e3")
+        lay.addWidget(body)
+        probe = QtGui.QTextDocument(); probe.setDefaultFont(body.font()); probe.setHtml(body.toHtml())
+        f.setMaximumWidth(int(probe.idealWidth()) + 40)
         rw = QtWidgets.QPushButton("Rewind files to here", objectName="flat")
         rw.setToolTip("Undo the file edits Claude made from this message on (the conversation stays)")
         rw.clicked.connect(lambda: self.rewind(f))
@@ -967,12 +1008,15 @@ class Convo(QtCore.QObject):
         if not uuid_:
             self.bubbles.append(f)
         self.streams = {}
-        return self._add(f)
+        row = QtWidgets.QWidget(); rl = QtWidgets.QHBoxLayout(row); rl.setContentsMargins(0, 0, 0, 0)
+        rl.addStretch(22); rl.addWidget(f, 78)           # right-aligned, never wider than 78%
+        self._add(row)
+        return f
 
     def add_text(self, text="", depth=0):
-        t = AutoText(text, color="#b8b8c8" if depth else None)
+        t = AutoText(text, color="#a6a39d" if depth else None)
         if depth:
-            t.setStyleSheet("color:#b8b8c8;border-left:2px solid #34343e;padding-left:6px;margin-left:%dpx;" % (18 * depth))
+            t.setStyleSheet("color:#a6a39d;border-left:2px solid #3a3935;padding-left:6px;margin-left:%dpx;" % (18 * depth))
         self.cur_text = self._add(t)
         return t
 
@@ -983,7 +1027,7 @@ class Convo(QtCore.QObject):
         b = QtWidgets.QPushButton("Thinking...", objectName="flat")
         b.setStyleSheet("text-align:left;font-style:italic;")
         lay.addWidget(b, 0, QtCore.Qt.AlignLeft)
-        t = AutoText("", color="#7a7a88"); t.hide(); lay.addWidget(t)
+        t = AutoText("", color="#77756f"); t.hide(); lay.addWidget(t)
         b.clicked.connect(lambda: t.setVisible(not t.isVisible()))
         self._add(f)
         self.cur_think = t
@@ -1044,18 +1088,18 @@ class Convo(QtCore.QObject):
             if o.get("status") == "compacting":
                 self.add_note("Compacting the conversation...")
             elif o.get("compact_error"):
-                self.add_note("Compact failed: %s" % o["compact_error"], "#ff8a9a")
+                self.add_note("Compact failed: %s" % o["compact_error"], "#e5675f")
         elif st == "compact_boundary":
             m = o.get("compact_metadata") or {}
             self.add_note("──  Conversation compacted (%s, was %s tokens)  ──" % (
-                m.get("trigger", "?"), _k(m.get("pre_tokens") or 0)), "#9a9aff")
+                m.get("trigger", "?"), _k(m.get("pre_tokens") or 0)), "#6aa5ff")
             self.ask_context()
         elif st == "api_retry":
             self.add_note("API busy - retry %s/%s in %.0fs (%s)" % (
                 o.get("attempt"), o.get("max_retries"), (o.get("retry_delay_ms") or 0) / 1000.0,
-                o.get("error_status") or o.get("error") or ""), "#ffb84d")
+                o.get("error_status") or o.get("error") or ""), "#d9a548")
         elif st == "notification" and o.get("text"):
-            self.add_note(o["text"], "#ffb84d")
+            self.add_note(o["text"], "#d9a548")
         elif st == "task_started":
             tid = o.get("task_id")
             if tid:
@@ -1087,11 +1131,11 @@ class Convo(QtCore.QObject):
             return
         if r.get("subtype") == "error":
             if what[0] == "mode":
-                self.add_note("Could not switch to %s: %s" % (what[1], r.get("error")), "#ff8a9a")
+                self.add_note("Could not switch to %s: %s" % (what[1], r.get("error")), "#e5675f")
             elif what[0] == "model":
-                self.add_note("Could not switch model: %s" % r.get("error"), "#ff8a9a")
+                self.add_note("Could not switch model: %s" % r.get("error"), "#e5675f")
             else:
-                self.add_note("%s failed: %s" % (what[0].rstrip("?"), r.get("error")), "#ff8a9a")
+                self.add_note("%s failed: %s" % (what[0].rstrip("?"), r.get("error")), "#e5675f")
             self.panel.convo_changed(self)             # the menus fall back to the real state
             return
         body = r.get("response") or {}
@@ -1100,7 +1144,7 @@ class Convo(QtCore.QObject):
             files = body.get("filesChanged") or []
             if not body.get("canRewind") or not files:
                 self.add_note("Nothing to rewind from that message%s." % (
-                    (" (%s)" % body["error"]) if body.get("error") else ""), "#ffb84d")
+                    (" (%s)" % body["error"]) if body.get("error") else ""), "#d9a548")
                 return
             names = "\n".join("  " + os.path.basename(f) for f in files[:12])
             ok = QtWidgets.QMessageBox.question(
@@ -1112,7 +1156,7 @@ class Convo(QtCore.QObject):
             return
         if what[0] == "rewind":
             self.add_note("Files rewound to before that message." if body.get("canRewind", True)
-                          else "Rewind failed: %s" % body.get("error"), "#9a9aff")
+                          else "Rewind failed: %s" % body.get("error"), "#6aa5ff")
             return
         if what[0] == "rename":
             self.panel.refresh_sessions()
@@ -1204,7 +1248,7 @@ class Convo(QtCore.QObject):
             else:                                        # elicitation, hooks, ...: answer, never hang
                 self.session.refuse(o.get("request_id"), "not supported by the Houdini chat panel")
                 self.add_note("Claude asked for '%s', which this panel can't show yet - declined." % req.get("subtype"),
-                              "#ffb84d")
+                              "#d9a548")
             self.panel.convo_changed(self)
         elif t == "result":
             u = o.get("usage") or {}
@@ -1214,7 +1258,7 @@ class Convo(QtCore.QObject):
                 why = "; ".join(str(e) for e in (o.get("errors") or [])) or o.get("result") or o.get("subtype")
                 if o.get("api_error_status"):
                     why = "%s (HTTP %s)" % (why, o["api_error_status"])
-                self.add_note("error: %s" % why, "#ff8a9a")
+                self.add_note("error: %s" % why, "#e5675f")
             else:
                 self.add_note("done  %.1fs   %s in / %s out" % ((o.get("duration_ms") or 0) / 1000.0,
                                                                _k(tokens), _k(u.get("output_tokens", 0))))
@@ -1228,24 +1272,24 @@ class Convo(QtCore.QObject):
         self._expire_asks("Expired - claude stopped")
         self.tasks = {}
         if code not in (0, None) and err.strip():
-            self.add_note("claude exited (%s): %s" % (code, err.strip()[-600:]), "#ff8a9a")
+            self.add_note("claude exited (%s): %s" % (code, err.strip()[-600:]), "#e5675f")
         self.panel.convo_changed(self)
 
 
 
 POPUP_CSS = """
-QFrame#pop { background: #232328; border: 1px solid #3a3a42; border-radius: 12px; }
-QLabel { color: #e8e8ec; font-size: 13px; background: transparent; }
-QLabel#hdr { color: #8a8a94; font-size: 12px; }
-QLabel#desc { color: #8a8a94; font-size: 12px; }
-QLabel#key { color: #8a8a94; font-size: 12px; }
-QLabel#check { color: #6aa9ff; font-size: 13px; }
-QLabel#badge { background: #34343c; color: #c8c8d0; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+* { font-family: "Leelawadee UI"; }
+QFrame#pop { background: #2a2927; border: 1px solid #3a3935; border-radius: 12px; }
+QLabel { color: #ece9e3; font-size: 13px; background: transparent; }
+QLabel#hdr { color: #77756f; font-size: 12px; }
+QLabel#desc { color: #77756f; font-size: 12px; }
+QLabel#key { color: #77756f; font-size: 12px; }
+QLabel#check { color: #ece9e3; font-size: 13px; }
+QLabel#badge { background: #353532; color: #a6a39d; border-radius: 5px; padding: 1px 6px; font-size: 11px; }
 QWidget#row { border-radius: 8px; }
-QWidget#row:hover { background: #2e2e36; }
-QFrame#sep { background: #34343c; max-height: 1px; min-height: 1px; }
+QWidget#row:hover { background: #353532; }
+QFrame#sep { background: #2f2e2b; max-height: 1px; min-height: 1px; }
 """
-
 
 def _safe_paint(widget, fn):
     """Paint with a guard. A Python exception while a QPainter is open takes all of Houdini down
@@ -1287,7 +1331,7 @@ class _Row(QtWidgets.QWidget):
         if r.get("disabled"):
             self.setEnabled(False)
             for w in self.findChildren(QtWidgets.QLabel):
-                w.setStyleSheet("color:#5a5a64;")
+                w.setStyleSheet("color:#77756f;")
         self.setToolTip(r.get("tip", ""))
 
     def enterEvent(self, e):
@@ -1394,15 +1438,15 @@ class DotSlider(QtWidgets.QWidget):
     def _paint(self, p):
         h = self.height()
         track = QtCore.QRectF(2, h / 2 - 7, self.width() - 4, 14)
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor("#2c2c33")); p.drawRoundedRect(track, 7, 7)
+        p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor("#2f2e2b")); p.drawRoundedRect(track, 7, 7)
         if self.value >= 0:
             fill = QtCore.QRectF(2, h / 2 - 7, self._x(self.value) + 8, 14)
-            p.setBrush(QtGui.QColor("#3c3c45")); p.drawRoundedRect(fill, 7, 7)
-        p.setBrush(QtGui.QColor("#77777f"))
+            p.setBrush(QtGui.QColor("#4a4944")); p.drawRoundedRect(fill, 7, 7)
+        p.setBrush(QtGui.QColor("#77756f"))
         for i in range(self.n):
             p.drawEllipse(QtCore.QPointF(self._x(i), h / 2), 1.6, 1.6)
         if self.value >= 0:
-            p.setBrush(QtGui.QColor("#ffffff"))
+            p.setBrush(QtGui.QColor("#ece9e3"))
             p.drawRoundedRect(QtCore.QRectF(self._x(self.value) - 6, h / 2 - 9, 12, 18), 4, 4)
 
     def _set_from(self, x):
@@ -1478,9 +1522,9 @@ class ContextRing(QtWidgets.QWidget):
 
     def _paint(self, p):
         r = QtCore.QRectF(2.5, 2.5, 13, 13)
-        p.setPen(QtGui.QPen(QtGui.QColor("#3a3a44"), 2.2)); p.drawEllipse(r)
+        p.setPen(QtGui.QPen(QtGui.QColor("#3a3935"), 2.2)); p.drawEllipse(r)
         if self.pct:
-            col = "#ff6a7a" if self.pct > 85 else "#ffb84d" if self.pct > 65 else "#5b8cff"
+            col = "#e5675f" if self.pct > 85 else "#d9a548" if self.pct > 65 else "#6aa5ff"
             pen = QtGui.QPen(QtGui.QColor(col), 2.2); pen.setCapStyle(QtCore.Qt.RoundCap)
             p.setPen(pen)
             p.drawArc(r, 90 * 16, -int(360 * 16 * min(100.0, self.pct) / 100.0))
@@ -1499,7 +1543,7 @@ class Thumb(QtWidgets.QLabel):
         path = QtGui.QPainterPath(); path.addRoundedRect(QtCore.QRectF(0.5, 0.5, 111, 111), 10, 10)
         p.setClipPath(path)
         p.drawPixmap((112 - pm.width()) // 2, (112 - pm.height()) // 2, pm)
-        p.setClipping(False); p.setPen(QtGui.QPen(QtGui.QColor("#3a3a44"), 1)); p.drawPath(path); p.end()
+        p.setClipping(False); p.setPen(QtGui.QPen(QtGui.QColor("#3a3935"), 1)); p.drawPath(path); p.end()
         self.setPixmap(out)
         self.x = QtWidgets.QPushButton("×", self, objectName="round")
         self.x.setFixedSize(22, 22); self.x.setStyleSheet("border-radius:11px;font-size:13px;")
@@ -1731,6 +1775,10 @@ class ChatPanel(QtWidgets.QWidget):
         self.models = {}                     # model value -> the CLI's description of it
         self.model_list = []
         self._spin = 0
+        # Dremzo Code's stack: Segoe UI for Latin, Leelawadee UI for Thai (Segoe UI has no Thai, and
+        # Qt's own fallback picks a font that renders Thai about half the size)
+        f = QtGui.QFont(); f.setFamilies(["Segoe UI", "Leelawadee UI", "Tahoma"]); f.setPixelSize(14)
+        self.setFont(f)
         self.setStyleSheet(CSS)
         self._build()
         self.setMinimumSize(640, 420)
@@ -1751,54 +1799,76 @@ class ChatPanel(QtWidgets.QWidget):
         # 1px inset so children sit inside the panel's rounded border instead of painting over it
         root = QtWidgets.QHBoxLayout(panel); root.setContentsMargins(1, 1, 1, 1); root.setSpacing(0)
 
-        side = QtWidgets.QFrame(objectName="side"); side.setFixedWidth(230); root.addWidget(side)
-        sl = QtWidgets.QVBoxLayout(side); sl.setContentsMargins(10, 12, 10, 10); sl.setSpacing(8)
-        t = QtWidgets.QLabel("Brother", objectName="title"); sl.addWidget(t)
-        nb = QtWidgets.QPushButton("+  New session", objectName="primary"); nb.clicked.connect(self.new_session)
-        sl.addWidget(nb)
-        sl.addWidget(QtWidgets.QLabel("HISTORY", objectName="dim"))
+        side = QtWidgets.QFrame(objectName="side"); side.setFixedWidth(260); root.addWidget(side)
+        sl = QtWidgets.QVBoxLayout(side); sl.setContentsMargins(6, 10, 6, 0); sl.setSpacing(2)
+        top = QtWidgets.QHBoxLayout(); top.setContentsMargins(8, 0, 4, 6); top.setSpacing(8); sl.addLayout(top)
+        top.addWidget(QtWidgets.QLabel(">_", objectName="brandmark"))
+        top.addWidget(QtWidgets.QLabel("FX AI", objectName="brand")); top.addStretch(1)
+        nb = QtWidgets.QPushButton("✎   New chat", objectName="nav"); nb.clicked.connect(self.new_session)
+        nrow = QtWidgets.QHBoxLayout(); nrow.setSpacing(0); nrow.addWidget(nb, 1)
+        kb = QtWidgets.QLabel("Ctrl+N", objectName="kbd"); kb.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        nrow.addWidget(kb); nrow.addSpacing(8); sl.addLayout(nrow)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+N"), self, activated=self.new_session)
+        sec = QtWidgets.QLabel("Chats", objectName="section"); sec.setContentsMargins(12, 12, 0, 2); sl.addWidget(sec)
         self.list = QtWidgets.QListWidget(); self.list.itemClicked.connect(self._pick_session)
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._history_menu)
-        self.list.setToolTip("Right-click a session to rename or fork it")
+        self.list.setToolTip("Right-click a chat to rename or fork it")
         self.list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.list.setTextElideMode(QtCore.Qt.ElideRight)
         sl.addWidget(self.list, 1)
-        self.cwd_label = QtWidgets.QLabel("cwd  %s" % self.cwd, objectName="dim"); self.cwd_label.setWordWrap(True)
-        sl.addWidget(self.cwd_label)
+        foot = QtWidgets.QFrame(); foot.setStyleSheet("border-top:1px solid #2f2e2b;")
+        fl = QtWidgets.QHBoxLayout(foot); fl.setContentsMargins(10, 9, 8, 9)
+        self.cwd_label = QtWidgets.QLabel(objectName="dim"); self.cwd_label.setStyleSheet("border:none;")
+        hip = os.path.basename(hou.hipFile.path())
+        self.cwd_label.setText("Houdini  ·  %s" % hip); self.cwd_label.setToolTip("cwd  %s" % self.cwd)
+        fl.addWidget(self.cwd_label, 1); sl.addWidget(foot)
 
-        main = QtWidgets.QVBoxLayout(); main.setContentsMargins(14, 10, 14, 12); main.setSpacing(8)
-        root.addLayout(main, 1)
-        head = QtWidgets.QHBoxLayout(); main.addLayout(head)
-        self.head_title = QtWidgets.QLabel("New session", objectName="title"); head.addWidget(self.head_title, 1)
-        self.max_btn = QtWidgets.QPushButton("⤢", objectName="flat")
+        mainw = QtWidgets.QWidget(); root.addWidget(mainw, 1)
+        mcol = QtWidgets.QVBoxLayout(mainw); mcol.setContentsMargins(0, 0, 0, 0); mcol.setSpacing(0)
+        tb = QtWidgets.QFrame(objectName="titlebar"); tb.setFixedHeight(44); mcol.addWidget(tb)
+        head = QtWidgets.QHBoxLayout(tb); head.setContentsMargins(14, 0, 8, 0); head.setSpacing(10)
+        self.head_title = QtWidgets.QLabel("New chat", objectName="title"); head.addWidget(self.head_title, 0, QtCore.Qt.AlignVCenter)
+        self.head_chip = QtWidgets.QLabel("▭  %s" % os.path.basename(self.cwd.rstrip("\\/")), objectName="chip")
+        self.head_chip.setToolTip(self.cwd); head.addWidget(self.head_chip, 0, QtCore.Qt.AlignVCenter)
+        head.addStretch(1)
+        self.max_btn = QtWidgets.QPushButton("⤢", objectName="icon")
         self.max_btn.setToolTip("Expand to fill the screen (or double-click the header)")
-        self.max_btn.setStyleSheet("font-size:15px;"); self.max_btn.clicked.connect(self.toggle_max)
+        self.max_btn.clicked.connect(self.toggle_max)
         head.addWidget(self.max_btn)
         self._normal_geo = None
-        hide = QtWidgets.QPushButton("Hide", objectName="flat"); hide.clicked.connect(self.hide)
-        head.addWidget(hide)
+        hide = QtWidgets.QPushButton("✕", objectName="icon"); hide.setToolTip("Hide (the chat keeps running)")
+        hide.clicked.connect(self.hide); head.addWidget(hide)
+
+        main = QtWidgets.QVBoxLayout(); main.setContentsMargins(0, 0, 0, 14); main.setSpacing(0)
+        mcol.addLayout(main, 1)
 
         self.limit_bar = QtWidgets.QLabel(); self.limit_bar.setWordWrap(True); self.limit_bar.hide()
-        self.limit_bar.setStyleSheet("background:#2a2010;color:#ffcf7a;border:1px solid #6a5418;"
+        self.limit_bar.setStyleSheet("background:#2a2010;color:#d9a548;border:1px solid #6a5418;"
                                      "border-radius:6px;padding:5px 8px;font-size:12px;")
-        main.addWidget(self.limit_bar)
-
         self.stack = QtWidgets.QStackedWidget()
         main.addWidget(self.stack, 1)
 
-        # project + branch strip, like "dremzo-web  staging" above the Claude app's composer
-        strip = QtWidgets.QFrame(objectName="ctxStrip"); main.addWidget(strip)
-        sl2 = QtWidgets.QHBoxLayout(strip); sl2.setContentsMargins(12, 6, 12, 6); sl2.setSpacing(10)
+        # the composer: one 760px column in the middle, like Dremzo Code's .composer-wrap
+        wrap_row = QtWidgets.QHBoxLayout(); wrap_row.setContentsMargins(0, 0, 0, 0); main.addLayout(wrap_row)
+        wrapw = QtWidgets.QWidget(); wrapw.setMaximumWidth(760)
+        wrapw.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
+        wrap_row.addStretch(1); wrap_row.addWidget(wrapw, 100); wrap_row.addStretch(1)
+        wrap = QtWidgets.QVBoxLayout(wrapw); wrap.setContentsMargins(28, 0, 28, 0); wrap.setSpacing(0)
+        wrap.addWidget(self.limit_bar); wrap.addSpacing(4)
+
+        # project + branch bar sitting on top of the composer ("dremzo-web  staging")
+        strip_row = QtWidgets.QHBoxLayout(); strip_row.setContentsMargins(10, 0, 10, 0); wrap.addLayout(strip_row)
+        strip = QtWidgets.QFrame(objectName="ctxStrip"); strip_row.addWidget(strip)
+        sl2 = QtWidgets.QHBoxLayout(strip); sl2.setContentsMargins(14, 7, 14, 7); sl2.setSpacing(10)
         self.proj_label = QtWidgets.QLabel()
-        self.proj_label.setStyleSheet("color:#9a9aa6;font-family:%s;font-size:12px;" % MONO)
+        self.proj_label.setStyleSheet("color:#a6a39d;font-family:%s;font-size:12px;" % MONO)
         sl2.addWidget(self.proj_label); sl2.addStretch(1)
         self.tasks_label = QtWidgets.QLabel(objectName="dim"); sl2.addWidget(self.tasks_label)
         self._refresh_project()
 
         # the composer box: thumbnails on top, text, and the round send button inside
-        box = QtWidgets.QFrame(objectName="composerBox"); main.addWidget(box)
-        bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(12, 8, 8, 8); bl.setSpacing(6)
+        box = QtWidgets.QFrame(objectName="composerBox"); wrap.addWidget(box)
+        bl = QtWidgets.QVBoxLayout(box); bl.setContentsMargins(12, 10, 10, 8); bl.setSpacing(6)
         self.thumbs = QtWidgets.QWidget(); self.thumbs_lay = QtWidgets.QHBoxLayout(self.thumbs)
         self.thumbs_lay.setContentsMargins(0, 0, 0, 0); self.thumbs_lay.setSpacing(8)
         self.thumbs.hide(); bl.addWidget(self.thumbs)
@@ -1811,16 +1881,15 @@ class ChatPanel(QtWidgets.QWidget):
         self.composer.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         row.addWidget(self.composer, 1)
         QtCore.QTimer.singleShot(0, self._fit_composer)
-        self.send_btn = QtWidgets.QPushButton("↵", objectName="send"); self.send_btn.setFixedSize(28, 28)
+        # send / stop live at the right end of the bottom row (built below), like Dremzo Code
+        self.send_btn = QtWidgets.QPushButton("↑", objectName="send"); self.send_btn.setFixedSize(30, 30)
         self.send_btn.setToolTip("Send (Enter)"); self.send_btn.clicked.connect(self.send)
-        row.addWidget(self.send_btn, 0, QtCore.Qt.AlignVCenter)
-        self.stop_btn = QtWidgets.QPushButton("■", objectName="stopr"); self.stop_btn.setFixedSize(28, 28)
+        self.stop_btn = QtWidgets.QPushButton("■", objectName="stopr"); self.stop_btn.setFixedSize(30, 30)
         self.stop_btn.setToolTip("Stop (Esc)"); self.stop_btn.clicked.connect(self.interrupt); self.stop_btn.hide()
-        row.addWidget(self.stop_btn, 0, QtCore.Qt.AlignVCenter)
         self.chips = QtWidgets.QLabel(objectName="dim"); self.chips.hide()     # kept for older callers
 
         # the bar under it: + | mode ............ model | effort | context ring
-        bar = QtWidgets.QHBoxLayout(); bar.setSpacing(2); main.addLayout(bar)
+        bar = QtWidgets.QHBoxLayout(); bar.setSpacing(2); bl.addLayout(bar)
         self.plus_btn = QtWidgets.QPushButton("+", objectName="bar"); self.plus_btn.setFixedWidth(28)
         self.plus_btn.setStyleSheet("font-size:16px;"); self.plus_btn.setToolTip("Add files, folders, commands...")
         self.plus_btn.clicked.connect(self._plus_menu); bar.addWidget(self.plus_btn)
@@ -1839,7 +1908,8 @@ class ChatPanel(QtWidgets.QWidget):
         bar.addWidget(self.model_btn)
         self.effort_btn = QtWidgets.QPushButton("Default", objectName="bar"); self.effort_btn.clicked.connect(self._effort_menu)
         self.effort_btn.setToolTip("Effort"); bar.addWidget(self.effort_btn)
-        self.ring = ContextRing(); bar.addSpacing(4); bar.addWidget(self.ring); bar.addSpacing(2)
+        self.ring = ContextRing(); bar.addSpacing(4); bar.addWidget(self.ring); bar.addSpacing(6)
+        bar.addWidget(self.send_btn); bar.addWidget(self.stop_btn)
         # resize from any edge or corner, like a normal window (see EdgeGrip) - no corner grip
         self.grips = [EdgeGrip(self, e) for e in EdgeGrip.EDGES]
         self.cost = QtWidgets.QLabel()            # replaced by the ring; kept so nothing old breaks
@@ -1847,7 +1917,7 @@ class ChatPanel(QtWidgets.QWidget):
 
         self.slash = QtWidgets.QListWidget(self)
         self.slash.setWindowFlags(QtCore.Qt.ToolTip)
-        self.slash.setStyleSheet("QListWidget{background:#1c1c22;border:1px solid #36363e;color:#ddd;font-size:12px;}")
+        self.slash.setStyleSheet("QListWidget{background:#2a2927;border:1px solid #3a3935;color:#ece9e3;font-size:12px;}")
         self.slash.itemClicked.connect(self._slash_pick)
         self._drag = None
 
@@ -2064,9 +2134,9 @@ class ChatPanel(QtWidgets.QWidget):
             self.mic.start()
         except Exception as e:
             self.mic = None
-            self.add_note("Microphone: %s" % e, "#ff8a9a"); return
+            self.add_note("Microphone: %s" % e, "#e5675f"); return
         self.mic_t0 = time.time()
-        self.mic_btn.setStyleSheet("color:#ff5a6a;font-weight:700;")
+        self.mic_btn.setStyleSheet("color:#e5675f;font-weight:700;")
         self.mic_btn.setToolTip("Listening on %s - click (or Ctrl+M) to stop" % self.mic.device_name)
         self.mic_timer.start(100)
 
@@ -2084,7 +2154,7 @@ class ChatPanel(QtWidgets.QWidget):
         try:
             secs = self.mic.stop(path)
         except Exception as e:
-            secs = 0; self.add_note("Microphone: %s" % e, "#ff8a9a")
+            secs = 0; self.add_note("Microphone: %s" % e, "#e5675f")
         self.mic = None
         self.mic_btn.setStyleSheet("")
         if secs < 0.3:
@@ -2096,7 +2166,7 @@ class ChatPanel(QtWidgets.QWidget):
 
     def _whisper_ready(self, device):
         if device not in ("cuda", "cpu"):
-            self.add_note("Voice input could not start: %s  (setup: see brother_whisper.py)" % device, "#ff8a9a")
+            self.add_note("Voice input could not start: %s  (setup: see brother_whisper.py)" % device, "#e5675f")
             self.mic_btn.setText("🎙"); self.mic_btn.setEnabled(True)
 
     def _whisper_result(self, o):
@@ -2106,10 +2176,10 @@ class ChatPanel(QtWidgets.QWidget):
         except OSError:
             pass
         if not o.get("ok"):
-            self.add_note("Voice input: %s" % o.get("error"), "#ff8a9a"); return
+            self.add_note("Voice input: %s" % o.get("error"), "#e5675f"); return
         text = (o.get("text") or "").strip()
         if not text:
-            self.add_note("Didn't catch anything - check the mic in Windows sound settings.", "#ffb84d"); return
+            self.add_note("Didn't catch anything - check the mic in Windows sound settings.", "#d9a548"); return
         cur = self.composer.toPlainText()
         self.composer.insertPlainText(("" if not cur or cur.endswith((" ", "\n")) else " ") + text)
         self.composer.setFocus()
@@ -2127,9 +2197,7 @@ class ChatPanel(QtWidgets.QWidget):
         pad = int(2 * c.document().documentMargin()) + 2 * c.frameWidth() + 4
         h = min(160, lines * c.fontMetrics().lineSpacing() + pad)
         c.setFixedHeight(max(28, h))
-        a = QtCore.Qt.AlignVCenter if lines == 1 else QtCore.Qt.AlignBottom
-        for b in (self.send_btn, self.stop_btn):
-            self.composer_row.setAlignment(b, a)
+
 
     def _effort_changed(self):
         pass
@@ -2140,8 +2208,8 @@ class ChatPanel(QtWidgets.QWidget):
             return
         sid, title = it.data(QtCore.Qt.UserRole), it.data(QtCore.Qt.UserRole + 1)
         m = QtWidgets.QMenu(self)
-        m.setStyleSheet("QMenu{background:#1c1c22;color:#e6e6ea;border:1px solid #36363e;}"
-                        "QMenu::item:selected{background:#2e2e38;}")
+        m.setStyleSheet("QMenu{background:#2a2927;color:#ece9e3;border:1px solid #3a3935;}"
+                        "QMenu::item:selected{background:#353532;}")
         ren = m.addAction("Rename...")
         fork = m.addAction("Fork - continue in a copy")
         got = m.exec(self.list.mapToGlobal(pos))
@@ -2159,7 +2227,7 @@ class ChatPanel(QtWidgets.QWidget):
                       fork=True)
             self.convos.append(c)
             c.load(sid)
-            c.add_note("Forked - this is a new session; the original is untouched.", "#9a9aff")
+            c.add_note("Forked - this is a new session; the original is untouched.", "#6aa5ff")
             c.start()
             self._show(c)
 
@@ -2228,19 +2296,41 @@ class ChatPanel(QtWidgets.QWidget):
                 mark = "?  "
             elif c is not None and c.working:
                 mark = SPIN[self._spin % len(SPIN)] + "  "
-            it = QtWidgets.QListWidgetItem("%s%s\n%s" % (mark, title, datetime.datetime.fromtimestamp(mtime).strftime("%d %b %H:%M")))
+            it = QtWidgets.QListWidgetItem()
             it.setData(QtCore.Qt.UserRole, sid)
             it.setData(QtCore.Qt.UserRole + 1, title)
             it.setData(QtCore.Qt.UserRole + 2, "wait" if mark.startswith("?") else "spin" if mark else "")
             it.setToolTip(("Waiting for your answer - " if mark.startswith("?") else
                            "Working... - " if mark else "") + sid)
             if mark.startswith("?"):
-                it.setForeground(QtGui.QColor("#ffb84d"))
+                it.setForeground(QtGui.QColor("#d9a548"))
             elif mark:
                 it.setForeground(QtGui.QColor("#ff4f9a"))
             self.list.addItem(it)
+            it.setSizeHint(QtCore.QSize(10, 32))
+            self.list.setItemWidget(it, self._row(mark, title, mtime, it))
             if sid == sel:
                 it.setSelected(True)
+
+    @staticmethod
+    def _ago(t):
+        d = max(0, time.time() - t)
+        return ("now" if d < 60 else "%dm" % (d // 60) if d < 3600 else "%dh" % (d // 3600) if d < 86400
+                else "%dd" % (d // 86400) if d < 7 * 86400 else datetime.datetime.fromtimestamp(t).strftime("%d %b"))
+
+    def _row(self, mark, title, mtime, it):
+        """One chat in the sidebar: a live dot or spinner, the title, its age on the right."""
+        w = QtWidgets.QWidget(); w.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        w.setStyleSheet("background:transparent;")
+        l = QtWidgets.QHBoxLayout(w); l.setContentsMargins(10, 0, 10, 0); l.setSpacing(8)
+        m = QtWidgets.QLabel(mark.strip()); m.setFixedWidth(12 if mark else 0)
+        m.setStyleSheet("color:%s;font-size:12px;" % ("#d9a548" if mark.startswith("?") else "#ff4f9a"))
+        t = QtWidgets.QLabel(); t.setStyleSheet("color:#ece9e3;font-size:13px;")
+        t.setText(t.fontMetrics().elidedText(title, QtCore.Qt.ElideRight, 170))
+        a = QtWidgets.QLabel(self._ago(mtime)); a.setStyleSheet("color:#77756f;font-size:12px;")
+        l.addWidget(m); l.addWidget(t, 1); l.addWidget(a)
+        it.setData(QtCore.Qt.UserRole + 3, m)
+        return w
 
     def _tick(self):
         """Spin the marks on working conversations."""
@@ -2250,9 +2340,12 @@ class ChatPanel(QtWidgets.QWidget):
         for i in range(self.list.count()):
             it = self.list.item(i)
             if it.data(QtCore.Qt.UserRole + 2) == "spin":
-                lines = it.text().split("\n", 1)
-                lines[0] = SPIN[self._spin % len(SPIN)] + lines[0][1:]
-                it.setText("\n".join(lines))
+                lab = it.data(QtCore.Qt.UserRole + 3)
+                if lab is not None:
+                    try:
+                        lab.setText(SPIN[self._spin % len(SPIN)])
+                    except RuntimeError:          # the row was rebuilt meanwhile
+                        pass
 
     # ---------------------------------------------------------------- sending
     def send(self):
@@ -2275,10 +2368,10 @@ class ChatPanel(QtWidgets.QWidget):
         if self.cur is not None and self.cur.busy:
             self.session.control("interrupt")
             self.cur._expire_asks("Cancelled - you stopped the turn")
-            self.cur.add_note("Stopped.", "#ff8a9a")
+            self.cur.add_note("Stopped.", "#e5675f")
             self.convo_changed(self.cur)
 
-    def add_note(self, text, color="#80808c"):
+    def add_note(self, text, color="#77756f"):
         return self.cur.add_note(text, color)
 
     # ---------------------------------------------------------------- attachments
@@ -2334,7 +2427,7 @@ class ChatPanel(QtWidgets.QWidget):
             self.composer.images.append(("image/png", base64.b64encode(bytes(ba)).decode()))
             self.refresh_chips()
         except Exception as e:
-            self.add_note("Viewport capture failed: %s (open a Scene View tab)" % e, "#ff8a9a")
+            self.add_note("Viewport capture failed: %s (open a Scene View tab)" % e, "#e5675f")
 
     def attach_selection(self):
         sel = [n.path() for n in hou.selectedNodes()]
