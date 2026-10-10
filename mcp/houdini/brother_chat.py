@@ -55,13 +55,17 @@ def _desktop_cli():
                                     "LocalCache", "Roaming", "Claude", "claude-code"))
     best = None
     for d in [d for r in roots for d in glob.glob(os.path.join(r, "*"))]:
-        exe = os.path.join(d, "claude.exe")
         try:
             ver = tuple(int(x) for x in os.path.basename(d).split("."))
         except ValueError:
             continue
-        if os.path.exists(exe) and (best is None or ver > best[0]):
-            best = (ver, exe)
+        # <ver>/claude.exe until 2.1.28x, then <ver>/<build hash>/claude.exe - check both, or the
+        # lookup finds nothing and quietly falls back to the npm CLI (too old for Opus 5.5)
+        for exe in [os.path.join(d, "claude.exe")] + glob.glob(os.path.join(d, "*", "claude.exe")):
+            if os.path.exists(exe):
+                key = (ver, os.path.getmtime(exe))
+                if best is None or key > best[0]:
+                    best = (key, exe)
     return best[1] if best else None
 
 
@@ -157,6 +161,55 @@ def list_sessions(cwd, limit=60):
         rows.append((sid, title.splitlines()[0][:80], os.path.getmtime(path)))
     rows.sort(key=lambda r: r[2], reverse=True)
     return rows[:limit]
+
+
+STATE_FILE = os.path.join(os.path.expanduser("~"), ".houdini_brother", "chat_state.json")
+TRASH_DIR = os.path.join(os.path.expanduser("~"), ".houdini_brother", "trash")
+
+
+def load_state():
+    """Pinned / archived chats - this machine only, like Dremzo Code's sidebar state."""
+    try:
+        with open(STATE_FILE, encoding="utf8") as fh:
+            st = json.load(fh)
+        if isinstance(st, dict):
+            return {"pinned": list(st.get("pinned") or []), "archived": list(st.get("archived") or [])}
+    except (OSError, ValueError):
+        pass
+    return {"pinned": [], "archived": []}
+
+
+def save_state(st):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    with open(STATE_FILE, "w", encoding="utf8") as fh:
+        json.dump(st, fh, indent=1)
+
+
+_SEARCH_CACHE = {}          # path -> (mtime, lowercased text)
+
+
+def session_text(cwd, sid):
+    """A chat's transcript, lowercased, for search across chats (cached by mtime)."""
+    path = os.path.join(project_dir(cwd), sid + ".jsonl")
+    try:
+        mt = os.path.getmtime(path)
+    except OSError:
+        return ""
+    hit = _SEARCH_CACHE.get(path)
+    if hit and hit[0] == mt:
+        return hit[1]
+    try:
+        with open(path, encoding="utf8", errors="replace") as fh:
+            txt = fh.read(6 * 1024 * 1024)
+    except OSError:
+        txt = ""
+    try:                      # the jsonl escapes non-ASCII; undo that so Thai matches too
+        txt = txt.encode("ascii", "backslashreplace").decode("unicode_escape", "replace")
+    except Exception:
+        pass
+    txt = txt.lower()
+    _SEARCH_CACHE[path] = (mt, txt)
+    return txt
 
 
 def load_transcript(cwd, sid):
@@ -666,6 +719,38 @@ def _esc(s):
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+class EditedCard(QtWidgets.QFrame):
+    """'Edited N files  +A -D' after a turn, one row per file; a row opens its diff, Open opens the file."""
+    def __init__(self, edited, parent=None):
+        super().__init__(parent)
+        self.setObjectName("edited")
+        self.setStyleSheet("QFrame#edited{border:1px solid #3a3935;border-radius:12px;background:transparent;}")
+        lay = QtWidgets.QVBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(0)
+        ta = sum(r["add"] for r in edited.values()); td = sum(r["del"] for r in edited.values())
+        head = QtWidgets.QLabel("Edited %d file%s &nbsp;<span style='color:#5fb87a'>+%d</span> "
+                                "<span style='color:#e5675f'>-%d</span>" % (len(edited), "s" if len(edited) > 1 else "", ta, td))
+        head.setStyleSheet("padding:8px 12px;font-size:13px;color:#ece9e3;"); lay.addWidget(head)
+        for path, r in sorted(edited.items()):
+            row = QtWidgets.QFrame(); row.setStyleSheet("QFrame{border-top:1px solid #2f2e2b;}")
+            rl = QtWidgets.QVBoxLayout(row); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(0)
+            top = QtWidgets.QHBoxLayout(); top.setContentsMargins(12, 5, 8, 5); rl.addLayout(top)
+            b = QtWidgets.QPushButton("%s   %s" % (os.path.basename(path), os.path.dirname(path)), objectName="flat")
+            b.setStyleSheet("text-align:left;color:#ece9e3;border:none;")
+            b.setToolTip("Show the changes")
+            top.addWidget(b, 1)
+            n = QtWidgets.QLabel("<span style='color:#5fb87a'>+%d</span> <span style='color:#e5675f'>-%d</span>"
+                                 % (r["add"], r["del"])); n.setStyleSheet("border:none;"); top.addWidget(n)
+            o = QtWidgets.QPushButton("Open", objectName="flat"); o.setStyleSheet("border:none;")
+            o.clicked.connect(lambda _=False, p=path: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(p)))
+            top.addWidget(o)
+            diff = AutoText(""); diff.setHtml("<div style='font-family:Consolas;font-size:11px'>%s</div>"
+                                              % (r["html"] or "<i>new file</i>")); diff.hide()
+            diff.setStyleSheet("border:none;background:#1c1b1a;")
+            rl.addWidget(diff)
+            b.clicked.connect(lambda _=False, d=diff: d.setVisible(not d.isVisible()))
+            lay.addWidget(row)
+
+
 class _Card(QtWidgets.QFrame):
     """A question from Claude that waits for Plug. Expires when the turn ends without an answer."""
     def __init__(self, req, answer, parent=None):
@@ -718,7 +803,8 @@ class PermissionCard(_Card):
             why = QtWidgets.QLabel(_esc(r["decision_reason"])); why.setWordWrap(True); why.setObjectName("dim")
             self.lay.addWidget(why)
         row = QtWidgets.QHBoxLayout(); self.lay.addLayout(row)
-        self.button(row, "Allow", lambda: self.send(True, "Allowed once", tool_input=r.get("input")), True)
+        self.keys = {}                       # "1"/"2"/"3" -> button, like Dremzo Code's approvals
+        self.keys["1"] = self.button(row, "Allow   1", lambda: self.send(True, "Allowed once", tool_input=r.get("input")), True)
         sugg = r.get("permission_suggestions")
         if sugg:
             wheres = {x.get("destination") for x in sugg if isinstance(x, dict)}
@@ -726,7 +812,8 @@ class PermissionCard(_Card):
             b = self.button(row, "Always allow", lambda: self.send(True, "Always allowed - " + where,
                                                                    tool_input=r.get("input"), permissions=sugg))
             b.setToolTip("Remembered for: " + where)
-        self.button(row, "Deny", lambda: self.send(False, "Denied", message=self.fb.text().strip()))
+            b.setText("Always allow   2"); self.keys["2"] = b
+        self.keys["3"] = self.button(row, "Deny   3", lambda: self.send(False, "Denied", message=self.fb.text().strip()))
         self.fb = QtWidgets.QLineEdit(); self.fb.setPlaceholderText("or tell Brother what to do instead, then Deny")
         self.fb.setStyleSheet("background:#1f1e1d;color:#ece9e3;border:1px solid #3a3935;border-radius:6px;padding:4px;")
         self.fb.returnPressed.connect(lambda: self.send(False, "Denied", message=self.fb.text().strip()))
@@ -817,14 +904,75 @@ class Composer(QtWidgets.QPlainTextEdit):
         self.setMinimumHeight(44); self.setMaximumHeight(160)
         self.images = []                                        # [(media_type, base64)]
 
+    submit_now = QtCore.Signal()
+
     def keyPressEvent(self, e):
-        if e.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and not (e.modifiers() & QtCore.Qt.ShiftModifier):
+        panel = self.parent_panel()
+        k, mods = e.key(), e.modifiers()
+        # the / popup: arrows move, Tab / Enter pick (it used to be click-only)
+        if panel is not None and panel.slash.isVisible() and panel.slash.count():
+            if k in (QtCore.Qt.Key_Down, QtCore.Qt.Key_Up):
+                r = panel.slash.currentRow() + (1 if k == QtCore.Qt.Key_Down else -1)
+                panel.slash.setCurrentRow(max(0, min(panel.slash.count() - 1, r))); return
+            if k in (QtCore.Qt.Key_Tab, QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+                panel._slash_pick(panel.slash.currentItem() or panel.slash.item(0)); return
+            if k == QtCore.Qt.Key_Escape:
+                panel.slash.hide(); return
+        # 1 / 2 / 3 answer the approval card on screen while the box is empty
+        if (panel is not None and not self.toPlainText() and not (mods & (QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier | QtCore.Qt.ShiftModifier))
+                and e.text() in ("1", "2", "3")):
+            card = panel.live_permission()
+            if card is not None and e.text() in card.keys:
+                card.keys[e.text()].click(); return
+        if k in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and (mods & QtCore.Qt.ControlModifier):
+            self.submit_now.emit(); return
+        if k in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter) and not (mods & QtCore.Qt.ShiftModifier):
             self.submit.emit(); return
         if e.key() == QtCore.Qt.Key_Escape:
             self.escape.emit(); return
         if e.key() == QtCore.Qt.Key_Backspace and not self.toPlainText() and self.images:
             self.images = []; self.parent_panel().refresh_chips(); return
         super().keyPressEvent(e)
+
+    # drag-and-drop: renders and photos become attachments, other files an @path, node paths text
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls() or e.mimeData().hasImage() or e.mimeData().hasText():
+            e.acceptProposedAction()
+        else:
+            super().dragEnterEvent(e)
+
+    def dragMoveEvent(self, e):
+        e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        if self.take_drop(e.mimeData()):
+            e.acceptProposedAction()
+        else:
+            super().dropEvent(e)
+
+    def take_drop(self, md):
+        panel = self.parent_panel()
+        if md.hasUrls() and any(u.isLocalFile() for u in md.urls()):
+            for u in md.urls():
+                if not u.isLocalFile():
+                    continue
+                p = u.toLocalFile()
+                ext = os.path.splitext(p)[1].lower().lstrip(".")
+                if ext in ("png", "jpg", "jpeg", "webp", "gif") and os.path.getsize(p) < 20 * 1024 * 1024:
+                    mt = "image/jpeg" if ext in ("jpg", "jpeg") else "image/%s" % ext
+                    with open(p, "rb") as fh:
+                        self.images.append((mt, base64.b64encode(fh.read()).decode()))
+                elif panel is not None:
+                    panel._mention(p)
+            if panel is not None:
+                panel.refresh_chips()
+            self.setFocus()
+            return True
+        if md.hasImage():
+            self.insertFromMimeData(md); return True
+        if md.hasText():
+            self.insertPlainText(md.text()); self.setFocus(); return True
+        return False
 
     def insertFromMimeData(self, md):                           # paste an image straight in
         if md.hasImage():
@@ -871,6 +1019,12 @@ class Convo(QtCore.QObject):
         self.api_source = None            # "none" = signed in with the subscription, not an API key
         self.announced = None
         self.follow = True
+        self.queue = []                   # (text, images) sent while a turn was running
+        self.unread = None                # None | "done" | "error" - finished while not looked at
+        self.turn_t0 = None               # when the running turn started (the "Working Ns" line)
+        self.working_w = None
+        self.edited = {}                  # path -> {"add", "del", "html"} for the "Edited N files" card
+        self.edit_ids = {}                # tool_use_id -> (path, add, del)
         self.scroll = QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         host = QtWidgets.QWidget(objectName="feedhost")
@@ -887,6 +1041,54 @@ class Convo(QtCore.QObject):
         sb = self.scroll.verticalScrollBar()
         sb.rangeChanged.connect(lambda _a, mx: self.follow and sb.setValue(mx))
         sb.valueChanged.connect(lambda v: setattr(self, "follow", v >= sb.maximum() - 30))
+        # "Jump to latest" floats over the log while you're scrolled up (Dremzo Code's log-below)
+        self.jump = QtWidgets.QPushButton("↓  Jump to latest", self.scroll)
+        self.jump.setStyleSheet("QPushButton{background:#2a2927;color:#ece9e3;border:1px solid #3a3935;"
+                                "border-radius:14px;padding:5px 14px;font-size:12px;}"
+                                "QPushButton:hover{background:#353532;}")
+        self.jump.hide()
+        self.jump.clicked.connect(self.to_bottom)
+        sb.rangeChanged.connect(lambda *_: self._place_jump())
+        sb.valueChanged.connect(lambda *_: self._place_jump())
+        self.scroll.installEventFilter(self)
+
+    def to_bottom(self):
+        self.follow = True
+        sb = self.scroll.verticalScrollBar(); sb.setValue(sb.maximum())
+
+    def _place_jump(self):
+        sb = self.scroll.verticalScrollBar()
+        show = sb.maximum() > 0 and sb.value() < sb.maximum() - 120
+        if show:
+            self.jump.adjustSize()
+            self.jump.move((self.scroll.width() - self.jump.width()) // 2, self.scroll.height() - self.jump.height() - 14)
+            self.jump.raise_()
+        self.jump.setVisible(show)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.scroll and ev.type() == QtCore.QEvent.Resize:
+            self._place_jump()
+        return False
+
+    # ---------------------------------------------------------------- the "Working Ns" line
+    def _working(self, on):
+        if on and self.working_w is None:
+            self.working_w = QtWidgets.QLabel()
+            self.working_w.setStyleSheet("color:#a6a39d;font-size:13px;")
+            self.feed.insertWidget(self.feed.count() - 1, self.working_w)
+            self.tick_working()
+        elif not on and self.working_w is not None:
+            self.working_w.deleteLater(); self.working_w = None
+            self.turn_t0 = None
+
+    def tick_working(self, phase=0):
+        if self.working_w is None:
+            return
+        secs = int(time.time() - (self.turn_t0 or time.time()))
+        took = ("%dm %02ds" % (secs // 60, secs % 60)) if secs >= 60 else "%ds" % secs
+        dots = "".join("<span style='color:%s'>●</span>" % ("#ff4f9a" if i == phase % 3 else "#5a3346") for i in range(3))
+        self.working_w.setText("%s&nbsp;&nbsp;Working %s &nbsp;·&nbsp; <span style='color:#77756f'>Esc to stop</span>"
+                               % (dots, took))
 
     # ---------------------------------------------------------------- state
     @property
@@ -938,11 +1140,19 @@ class Convo(QtCore.QObject):
         if self.session is not None and not self.working:
             self.session.stop()
 
-    def send(self, text, imgs):
+    def send(self, text, imgs, queue_if_busy=True):
+        if queue_if_busy and (self.busy or self.waiting):
+            # Dremzo Code's queue: shown above the composer, sent when the turn ends
+            self.queue.append((text, list(imgs)))
+            self.panel.refresh_queue()
+            return
         self.start()
         self.add_user(text, len(imgs))
         if self.session.send(text, imgs):
             self.has_history = True
+            self.turn_t0 = time.time()
+            self.edited, self.edit_ids = {}, {}
+            self._working(True)
         self.follow = True
         self.panel.convo_changed(self)
 
@@ -983,8 +1193,40 @@ class Convo(QtCore.QObject):
 
     # ---------------------------------------------------------------- feed
     def _add(self, w):
-        self.feed.insertWidget(self.feed.count() - 1, w)
+        i = self.feed.indexOf(self.working_w) if self.working_w is not None else -1
+        self.feed.insertWidget(i if i >= 0 else self.feed.count() - 1, w)
         return w
+
+    # ---------------------------------------------------------------- 5. files Claude edited this turn
+    def _track_edit(self, name, tool_id, inp):
+        if name not in ("Write", "Edit", "MultiEdit", "NotebookEdit") or not isinstance(inp, dict):
+            return
+        path = inp.get("file_path") or inp.get("notebook_path")
+        if not path or tool_id in self.edit_ids:
+            return
+        if name == "Write":
+            add, dele, edits = len(str(inp.get("content", "")).splitlines()), 0, []
+        else:
+            edits = inp.get("edits") or [inp]
+            add = sum(len(str(e.get("new_string", "")).splitlines()) for e in edits)
+            dele = sum(len(str(e.get("old_string", "")).splitlines()) for e in edits)
+        html = []
+        for e in edits:
+            for line in str(e.get("old_string", "")).splitlines()[:40]:
+                html.append("<div style='background:#3a1e1c;color:#f0b0aa'>- %s</div>" % _esc(line))
+            for line in str(e.get("new_string", "")).splitlines()[:40]:
+                html.append("<div style='background:#173222;color:#a8e0b8'>+ %s</div>" % _esc(line))
+        rec = self.edited.setdefault(path, {"add": 0, "del": 0, "html": ""})
+        rec["add"] += add; rec["del"] += dele; rec["html"] += "".join(html)
+        self.edit_ids[tool_id] = (path, add, dele)
+
+    def _untrack_edit(self, tool_id):
+        got = self.edit_ids.pop(tool_id, None)
+        if got and got[0] in self.edited:
+            rec = self.edited[got[0]]
+            rec["add"] -= got[1]; rec["del"] -= got[2]
+            if rec["add"] <= 0 and rec["del"] <= 0:
+                del self.edited[got[0]]
 
     def add_note(self, text, color="#77756f"):
         l = QtWidgets.QLabel(text); l.setWordWrap(True); l.setStyleSheet("color:%s;font-size:11px;" % color)
@@ -1217,6 +1459,7 @@ class Convo(QtCore.QObject):
                 if b.get("type") == "tool_use":
                     c = self.cards.get(b.get("id")) or self.add_tool(b.get("name", "?"), b.get("id"), depth)
                     c.set_input(b.get("input"))
+                    self._track_edit(b.get("name"), b.get("id"), b.get("input"))
                 elif b.get("type") == "text" and st.get("text") is None and b.get("text"):
                     self.add_text(b["text"], depth)   # no partials came (e.g. a subagent) - show whole
         elif t == "user":
@@ -1236,6 +1479,8 @@ class Convo(QtCore.QObject):
                 c = self.cards.get(b.get("tool_use_id"))
                 if c:
                     c.set_result(b.get("content"), b.get("is_error"))
+                if b.get("is_error"):
+                    self._untrack_edit(b.get("tool_use_id"))
             st = self.streams.get(o.get("parent_tool_use_id"))
             if st:
                 st["text"] = None
@@ -1245,6 +1490,8 @@ class Convo(QtCore.QObject):
                 card = make_card(o, self._answer)
                 self.asks[o.get("request_id")] = card
                 self._add(card)
+                self.panel.notify(self, "Waiting for your answer - %s" % (
+                    req.get("display_name") or req.get("tool_name") or "a question"))
             else:                                        # elicitation, hooks, ...: answer, never hang
                 self.session.refuse(o.get("request_id"), "not supported by the Houdini chat panel")
                 self.add_note("Claude asked for '%s', which this panel can't show yet - declined." % req.get("subtype"),
@@ -1254,7 +1501,12 @@ class Convo(QtCore.QObject):
             u = o.get("usage") or {}
             tokens = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
                       + u.get("cache_creation_input_tokens", 0))
-            if o.get("is_error"):
+            # a Stop ends the turn with error_during_execution - that's Plug's choice, not an error
+            stopped, self.stopped = getattr(self, "stopped", False), False
+            failed = bool(o.get("is_error")) and not stopped
+            if stopped:
+                pass                                         # interrupt() already wrote "Stopped."
+            elif failed:
                 why = "; ".join(str(e) for e in (o.get("errors") or [])) or o.get("result") or o.get("subtype")
                 if o.get("api_error_status"):
                     why = "%s (HTTP %s)" % (why, o["api_error_status"])
@@ -1264,11 +1516,20 @@ class Convo(QtCore.QObject):
                                                                _k(tokens), _k(u.get("output_tokens", 0))))
             self.cur_text = self.cur_think = self.cur_tool = None
             self.streams = {}
+            self._working(False)
+            if self.edited:
+                self._add(EditedCard(self.edited))
+                self.edited, self.edit_ids = {}, {}
             self._expire_asks()
             self.ask_context()
+            if not self.panel.looking_at(self):
+                self.unread = "error" if failed else "done"
+            if not stopped:
+                self.panel.notify(self, "Error - open the chat to see why" if failed else "Finished")
             self.panel.convo_changed(self, finished=True)
 
     def on_ended(self, code, err):
+        self._working(False)
         self._expire_asks("Expired - claude stopped")
         self.tasks = {}
         if code not in (0, None) and err.strip():
@@ -1763,6 +2024,91 @@ class EdgeGrip(QtWidgets.QWidget):
         self._start = None
 
 
+class FindBar(QtWidgets.QFrame):
+    """Ctrl+F: find in the chat on screen. Enter / Shift+Enter step, Esc closes."""
+    def __init__(self, panel, parent):
+        super().__init__(parent)
+        self.panel = panel
+        self.setObjectName("findbar")
+        self.setStyleSheet("QFrame#findbar{background:#2b2a28;border:1px solid #3a3935;border-radius:10px;}"
+                           "QLineEdit{background:transparent;border:none;color:#ece9e3;font-size:13px;}")
+        l = QtWidgets.QHBoxLayout(self); l.setContentsMargins(10, 4, 6, 4); l.setSpacing(4)
+        self.edit = QtWidgets.QLineEdit(); self.edit.setPlaceholderText("Find in chat"); self.edit.setFixedWidth(200)
+        l.addWidget(self.edit)
+        self.count = QtWidgets.QLabel(objectName="dim"); l.addWidget(self.count)
+        for txt, fn in (("↑", lambda: self.step(-1)), ("↓", lambda: self.step(1)), ("✕", self.close_bar)):
+            b = QtWidgets.QPushButton(txt, objectName="flat"); b.clicked.connect(fn); l.addWidget(b)
+        self.edit.textChanged.connect(self.search)
+        self.edit.returnPressed.connect(lambda: self.step(-1 if QtWidgets.QApplication.keyboardModifiers()
+                                                          & QtCore.Qt.ShiftModifier else 1))
+        self.hits, self.i, self.widgets = [], -1, []
+
+    def place(self):
+        self.adjustSize()
+        p = self.parent()
+        self.move(p.width() - self.width() - 18, 52)
+        self.raise_()
+
+    def open(self):
+        self.show(); self.place(); self.edit.setFocus(); self.edit.selectAll()
+        self.search()
+
+    def close_bar(self):
+        self._clear(); self.hide(); self.panel.composer.setFocus()
+
+    def keyPressEvent(self, e):
+        if e.key() == QtCore.Qt.Key_Escape:
+            self.close_bar(); return
+        super().keyPressEvent(e)
+
+    def _clear(self):
+        for w in self.widgets:
+            try:
+                w.setExtraSelections([])
+            except RuntimeError:
+                pass
+        self.hits, self.i, self.widgets = [], -1, []
+
+    def search(self):
+        self._clear()
+        q = self.edit.text()
+        c = self.panel.cur
+        if not q or c is None:
+            self.count.setText(""); return
+        host = c.scroll.widget()
+        ws = [w for w in host.findChildren(AutoText) if w.isVisibleTo(host)]
+        ws.sort(key=lambda w: w.mapTo(host, QtCore.QPoint(0, 0)).y())
+        for w in ws:
+            cur = w.document().find(q)
+            found = False
+            while not cur.isNull():
+                self.hits.append((w, QtGui.QTextCursor(cur))); found = True
+                cur = w.document().find(q, cur)
+            if found:
+                self.widgets.append(w)
+        self.step(1)
+
+    def step(self, d):
+        if not self.hits:
+            self.count.setText("0" if self.edit.text() else ""); return
+        self.i = (self.i + d) % len(self.hits)
+        by = {}
+        for n, (w, cur) in enumerate(self.hits):
+            sel = QtWidgets.QTextEdit.ExtraSelection(); sel.cursor = cur
+            sel.format.setBackground(QtGui.QColor("#ff4f9a" if n == self.i else "#5a4a1e"))
+            if n == self.i:
+                sel.format.setForeground(QtGui.QColor("#ffffff"))
+            by.setdefault(w, []).append(sel)
+        for w, sels in by.items():
+            w.setExtraSelections(sels)
+        w, cur = self.hits[self.i]
+        c = self.panel.cur
+        c.follow = False
+        y = w.mapTo(c.scroll.widget(), w.cursorRect(cur).topLeft()).y()
+        c.scroll.ensureVisible(0, y, 0, 120)
+        self.count.setText("%d/%d" % (self.i + 1, len(self.hits)))
+
+
 class ChatPanel(QtWidgets.QWidget):
     def __init__(self, main):
         super().__init__(main, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
@@ -1804,12 +2150,26 @@ class ChatPanel(QtWidgets.QWidget):
         top = QtWidgets.QHBoxLayout(); top.setContentsMargins(8, 0, 4, 6); top.setSpacing(8); sl.addLayout(top)
         top.addWidget(QtWidgets.QLabel(">_", objectName="brandmark"))
         top.addWidget(QtWidgets.QLabel("FX AI", objectName="brand")); top.addStretch(1)
+        sbtn = QtWidgets.QPushButton("⌕", objectName="icon"); sbtn.setToolTip("Search chats (Ctrl+K)")
+        sbtn.clicked.connect(self.focus_search); top.addWidget(sbtn)
+        self.search = QtWidgets.QLineEdit(); self.search.setPlaceholderText("Search chats")
+        self.search.setClearButtonEnabled(True)
+        self.search.setStyleSheet("QLineEdit{background:#30302e;color:#ece9e3;border:1px solid #3a3935;"
+                                  "border-radius:8px;padding:5px 9px;margin:0 6px 6px 6px;}")
+        self.search.hide()
+        self._search_t = QtCore.QTimer(self); self._search_t.setSingleShot(True); self._search_t.setInterval(220)
+        self._search_t.timeout.connect(self.refresh_sessions)
+        self.search.textChanged.connect(lambda *_: self._search_t.start())
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+K"), self, activated=self.focus_search)
         nb = QtWidgets.QPushButton("✎   New chat", objectName="nav"); nb.clicked.connect(self.new_session)
         nrow = QtWidgets.QHBoxLayout(); nrow.setSpacing(0); nrow.addWidget(nb, 1)
         kb = QtWidgets.QLabel("Ctrl+N", objectName="kbd"); kb.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         nrow.addWidget(kb); nrow.addSpacing(8); sl.addLayout(nrow)
+        sl.addWidget(self.search)
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+N"), self, activated=self.new_session)
-        sec = QtWidgets.QLabel("Chats", objectName="section"); sec.setContentsMargins(12, 12, 0, 2); sl.addWidget(sec)
+        sl.addSpacing(6)
+        self.state = load_state()
+        self.show_archived = False
         self.list = QtWidgets.QListWidget(); self.list.itemClicked.connect(self._pick_session)
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._history_menu)
@@ -1841,20 +2201,34 @@ class ChatPanel(QtWidgets.QWidget):
 
         main = QtWidgets.QVBoxLayout(); main.setContentsMargins(0, 0, 0, 14); main.setSpacing(0)
         mcol.addLayout(main, 1)
+        self.mainw = mainw
+        self.findbar = FindBar(self, mainw); self.findbar.hide()
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), self, activated=self.findbar.open)
+        for keys, step in (("Ctrl+Tab", 1), ("Ctrl+Shift+Tab", -1), ("Alt+Down", 1), ("Alt+Up", -1)):
+            QtGui.QShortcut(QtGui.QKeySequence(keys), self, activated=lambda st=step: self.step_chat(st))
 
         self.limit_bar = QtWidgets.QLabel(); self.limit_bar.setWordWrap(True); self.limit_bar.hide()
         self.limit_bar.setStyleSheet("background:#2a2010;color:#d9a548;border:1px solid #6a5418;"
                                      "border-radius:6px;padding:5px 8px;font-size:12px;")
         self.stack = QtWidgets.QStackedWidget()
+        self.stack.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding)
         main.addWidget(self.stack, 1)
 
         # the composer: one 760px column in the middle, like Dremzo Code's .composer-wrap
-        wrap_row = QtWidgets.QHBoxLayout(); wrap_row.setContentsMargins(0, 0, 0, 0); main.addLayout(wrap_row)
+        # its own widget with a FIXED height (= its content): as a bare layout it was handed a share
+        # of the chat's height and the composer box ballooned once the queue strip showed
+        wrapc = QtWidgets.QWidget(); wrapc.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
+        wrap_row = QtWidgets.QHBoxLayout(wrapc); wrap_row.setContentsMargins(0, 0, 0, 0); main.addWidget(wrapc)
         wrapw = QtWidgets.QWidget(); wrapw.setMaximumWidth(760)
         wrapw.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         wrap_row.addStretch(1); wrap_row.addWidget(wrapw, 100); wrap_row.addStretch(1)
         wrap = QtWidgets.QVBoxLayout(wrapw); wrap.setContentsMargins(28, 0, 28, 0); wrap.setSpacing(0)
         wrap.addWidget(self.limit_bar); wrap.addSpacing(4)
+        self.queue_box = QtWidgets.QFrame(); self.queue_box.setObjectName("queueBox")
+        self.queue_box.setStyleSheet("QFrame#queueBox{background:#1f1e1d;border:1px solid #2f2e2b;border-radius:12px;}")
+        self.queue_lay = QtWidgets.QVBoxLayout(self.queue_box); self.queue_lay.setContentsMargins(10, 6, 6, 6)
+        self.queue_lay.setSpacing(2); self.queue_box.hide()
+        wrap.addWidget(self.queue_box); wrap.addSpacing(6)
 
         # project + branch bar sitting on top of the composer ("dremzo-web  staging")
         strip_row = QtWidgets.QHBoxLayout(); strip_row.setContentsMargins(10, 0, 10, 0); wrap.addLayout(strip_row)
@@ -1875,6 +2249,8 @@ class ChatPanel(QtWidgets.QWidget):
         row = QtWidgets.QHBoxLayout(); bl.addLayout(row); self.composer_row = row
         self.composer = Composer()
         self.composer.submit.connect(self.send)
+        self.composer.submit_now.connect(self.send_now)
+        self.setAcceptDrops(True)
         self.composer.escape.connect(self.interrupt)
         self.composer.textChanged.connect(self._slash_popup)
         self.composer.textChanged.connect(self._fit_composer)
@@ -1925,6 +2301,161 @@ class ChatPanel(QtWidgets.QWidget):
         super().resizeEvent(e)
         for g in getattr(self, "grips", []):
             g.place()
+        if getattr(self, "findbar", None) is not None:
+            self.findbar.place()
+
+    # 4. drop anywhere on the panel, not only on the text box
+    def dragEnterEvent(self, e):
+        md = e.mimeData()
+        if md.hasUrls() or md.hasImage() or md.hasText():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        if self.composer.take_drop(e.mimeData()):
+            e.acceptProposedAction()
+
+    # ---------------------------------------------------------------- 2. notifications
+    def looking_at(self, c):
+        return c is self.cur and self.isVisible() and self.isActiveWindow()
+
+    def notify(self, c, text):
+        """Plug isn't looking at this chat: flash Houdini in the taskbar and pop a Windows toast."""
+        if self.looking_at(c):
+            return
+        try:
+            QtWidgets.QApplication.alert(self.main, 0)
+            if QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+                if getattr(self, "_tray", None) is None:
+                    icon = QtWidgets.QApplication.windowIcon()
+                    if icon.isNull():
+                        icon = self.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxInformation)
+                    self._tray = QtWidgets.QSystemTrayIcon(icon, self)
+                    self._tray.messageClicked.connect(self._open_notified)
+                    self._tray_hide = QtCore.QTimer(self); self._tray_hide.setSingleShot(True)
+                    self._tray_hide.timeout.connect(self._tray.hide)
+                self._notified = c
+                self._tray.show()
+                self._tray.showMessage("FX AI  ·  %s" % _short(c.title, 50), text,
+                                       QtWidgets.QSystemTrayIcon.Information, 6000)
+                self._tray_hide.start(20000)
+        except Exception as e:                       # a notification must never break a turn
+            print("FX AI notify failed: %s" % e)
+
+    def _open_notified(self):
+        c = getattr(self, "_notified", None)
+        self.show(); self.raise_(); self.activateWindow()
+        if c is not None and c in self.convos:
+            self._show(c)
+
+    # ---------------------------------------------------------------- 1. the queue
+    def refresh_queue(self):
+        while self.queue_lay.count():
+            w = self.queue_lay.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        q = self.cur.queue if self.cur is not None else []
+        for i, (text, imgs) in enumerate(q):
+            row = QtWidgets.QWidget(); rl = QtWidgets.QHBoxLayout(row); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(4)
+            lab = QtWidgets.QLabel("Queued  ·  " + _short(text.replace("\n", " "), 80) + ("   +%d image(s)" % len(imgs) if imgs else ""))
+            lab.setStyleSheet("color:#a6a39d;font-size:12.5px;"); lab.setToolTip(text)
+            rl.addWidget(lab, 1)
+            now = QtWidgets.QPushButton("Send now", objectName="flat"); now.setToolTip("Stop the current turn and send this (Ctrl+Enter)")
+            now.clicked.connect(lambda _=False, i=i: self.queue_send_now(i)); rl.addWidget(now)
+            x = QtWidgets.QPushButton("✕", objectName="flat"); x.setToolTip("Remove from the queue")
+            x.clicked.connect(lambda _=False, i=i: self.queue_remove(i)); rl.addWidget(x)
+            self.queue_lay.addWidget(row)
+        self.queue_box.setVisible(bool(q))
+
+    def queue_remove(self, i):
+        if self.cur is not None and 0 <= i < len(self.cur.queue):
+            del self.cur.queue[i]
+        self.refresh_queue()
+
+    def queue_send_now(self, i):
+        c = self.cur
+        if c is None or not (0 <= i < len(c.queue)):
+            return
+        c.queue.insert(0, c.queue.pop(i))
+        self.refresh_queue()
+        if c.busy:
+            self.interrupt()                  # the queue flushes the moment the turn stops
+
+    def _flush_queues(self):
+        for c in self.convos:
+            if c.queue and not c.busy and not c.waiting and c.session is not None:
+                text, imgs = c.queue.pop(0)
+                c.send(text, imgs, queue_if_busy=False)
+                if c is self.cur:
+                    self.refresh_queue()
+
+    def send_now(self):
+        """Ctrl+Enter: send even while a turn runs - stop it first, then this goes."""
+        if self.cur is not None and self.cur.busy and self.composer.toPlainText().strip():
+            text = self.composer.toPlainText().strip(); imgs = list(self.composer.images)
+            self.cur.queue.insert(0, (text, imgs))
+            self.composer.clear(); self.composer.images = []; self.refresh_chips()
+            self.refresh_queue(); self.interrupt()
+        else:
+            self.send()
+
+    def live_permission(self):
+        if self.cur is None:
+            return None
+        live = [c for c in self.cur.asks.values() if c.live and isinstance(c, PermissionCard)]
+        return live[-1] if live else None
+
+    # ---------------------------------------------------------------- 6 / 8 / 10. sidebar
+    def focus_search(self):
+        self.search.show(); self.search.setFocus(); self.search.selectAll()
+
+    def step_chat(self, step):
+        sids = [self.list.item(i).data(QtCore.Qt.UserRole) for i in range(self.list.count())]
+        sids = [s for s in sids if s and not str(s).startswith("::")]
+        if not sids:
+            return
+        cur = self.cur.sid if self.cur is not None else None
+        i = sids.index(cur) if cur in sids else -1
+        sid = sids[(i + step) % len(sids)]
+        for n in range(self.list.count()):
+            if self.list.item(n).data(QtCore.Qt.UserRole) == sid:
+                self._pick_session(self.list.item(n)); return
+
+    def set_flag(self, sid, key, on):
+        lst = self.state[key]
+        if on and sid not in lst:
+            lst.append(sid)
+        if not on and sid in lst:
+            lst.remove(sid)
+        save_state(self.state)
+        self.refresh_sessions()
+
+    def delete_session(self, sid, title):
+        """Moves the transcript to ~/.houdini_brother/trash (not a permanent delete)."""
+        r = QtWidgets.QMessageBox.question(self, "Delete chat", "Delete \"%s\"?\n\nIt goes to %s and can be moved back."
+                                           % (_short(title, 60), TRASH_DIR))
+        if r != QtWidgets.QMessageBox.Yes:
+            return
+        c = self._convo_for(sid)
+        if c is not None:
+            if c.session is not None:
+                c.session.stop()
+            self.convos.remove(c)
+            self.stack.removeWidget(c.scroll); c.scroll.deleteLater()
+            if self.cur is c:
+                self.cur = None
+        os.makedirs(TRASH_DIR, exist_ok=True)
+        base = os.path.join(project_dir(self.cwd), sid)
+        for src in (base + ".jsonl", base):
+            if os.path.exists(src):
+                shutil.move(src, os.path.join(TRASH_DIR, os.path.basename(src)))
+        for key in ("pinned", "archived"):
+            if sid in self.state[key]:
+                self.state[key].remove(sid)
+        save_state(self.state)
+        if self.cur is None:
+            self.new_session()
+        else:
+            self.refresh_sessions()
 
     def toggle_max(self):
         """Fill the screen the panel is on; again to go back to the size it had."""
@@ -1972,7 +2503,11 @@ class ChatPanel(QtWidgets.QWidget):
         if self.stack.indexOf(c.scroll) < 0:
             self.stack.addWidget(c.scroll)
         self.cur = c
+        c.unread = None
         self.stack.setCurrentWidget(c.scroll)
+        self.refresh_queue()
+        if self.findbar.isVisible():
+            self.findbar.search()
         self.convo_changed(c)
         self.refresh_sessions()
         self.composer.setFocus()
@@ -1990,6 +2525,10 @@ class ChatPanel(QtWidgets.QWidget):
 
     def _pick_session(self, item):
         sid = item.data(QtCore.Qt.UserRole)
+        if sid == "::archived":
+            self.show_archived = not self.show_archived; self.refresh_sessions(); return
+        if not sid or str(sid).startswith("::"):
+            return
         c = self._convo_for(sid)
         if c is None:                               # first time opened this Houdini: replay + resume
             c = Convo(self, resume=sid, title=item.data(QtCore.Qt.UserRole + 1) or "Session",
@@ -2210,9 +2749,22 @@ class ChatPanel(QtWidgets.QWidget):
         m = QtWidgets.QMenu(self)
         m.setStyleSheet("QMenu{background:#2a2927;color:#ece9e3;border:1px solid #3a3935;}"
                         "QMenu::item:selected{background:#353532;}")
+        if not sid or str(sid).startswith("::"):
+            return
+        pinned, archived = sid in self.state["pinned"], sid in self.state["archived"]
+        pin = m.addAction("Unpin" if pinned else "Pin to top")
         ren = m.addAction("Rename...")
         fork = m.addAction("Fork - continue in a copy")
+        m.addSeparator()
+        arc = m.addAction("Unarchive" if archived else "Archive")
+        dele = m.addAction("Delete...")
         got = m.exec(self.list.mapToGlobal(pos))
+        if got is pin:
+            self.set_flag(sid, "pinned", not pinned); return
+        if got is arc:
+            self.set_flag(sid, "archived", not archived); return
+        if got is dele:
+            self.delete_session(sid, title); return
         if got is ren:
             new, ok = QtWidgets.QInputDialog.getText(self, "Rename session", "Title:", text=title)
             if ok and new.strip():
@@ -2288,18 +2840,45 @@ class ChatPanel(QtWidgets.QWidget):
         on_disk = {sid for sid, _t, _m in rows}
         # live conversations not written to disk yet go on top
         live = [(c.sid, c.title, time.time()) for c in self.convos if c.sid and c.sid not in on_disk and c.working]
+        allrows = live + rows
+        q = self.search.text().strip().lower() if hasattr(self, "search") else ""
+        if q:                                    # 6. title or anything said in the chat
+            allrows = [r for r in allrows if q in (r[1] or "").lower() or q in session_text(self.cwd, r[0])]
+        pinned = [r for r in allrows if r[0] in self.state["pinned"]]
+        archived = [r for r in allrows if r[0] in self.state["archived"] and r[0] not in self.state["pinned"]]
+        rest = [r for r in allrows if r not in pinned and r not in archived]
         self.list.clear()
-        for sid, title, mtime in live + rows:
+        plan = []
+        if pinned:
+            plan += [("::head", "Pinned", None)] + pinned
+        plan += [("::head", ("Results" if q else "Chats"), None)] + rest
+        if archived:
+            plan += [("::archived", "%s Archived (%d)" % ("▾" if self.show_archived else "▸", len(archived)), None)]
+            if self.show_archived:
+                plan += archived
+        for sid, title, mtime in plan:
+            if str(sid).startswith("::"):
+                it = QtWidgets.QListWidgetItem(); it.setData(QtCore.Qt.UserRole, sid)
+                if sid == "::head":
+                    it.setFlags(QtCore.Qt.NoItemFlags)
+                self.list.addItem(it); it.setSizeHint(QtCore.QSize(10, 30))
+                lab = QtWidgets.QLabel(title); lab.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+                lab.setStyleSheet("color:#77756f;font-size:12px;padding:8px 0 0 12px;background:transparent;")
+                self.list.setItemWidget(it, lab)
+                continue
             c = self._convo_for(sid)
             mark = ""
             if c is not None and c.waiting:
                 mark = "?  "
             elif c is not None and c.working:
                 mark = SPIN[self._spin % len(SPIN)] + "  "
+            elif c is not None and c.unread:
+                mark = ("!" if c.unread == "error" else "•") + "  "
             it = QtWidgets.QListWidgetItem()
             it.setData(QtCore.Qt.UserRole, sid)
             it.setData(QtCore.Qt.UserRole + 1, title)
-            it.setData(QtCore.Qt.UserRole + 2, "wait" if mark.startswith("?") else "spin" if mark else "")
+            it.setData(QtCore.Qt.UserRole + 2, "wait" if mark.startswith("?") else
+                       "spin" if (mark and mark[:1] not in "•!") else "")
             it.setToolTip(("Waiting for your answer - " if mark.startswith("?") else
                            "Working... - " if mark else "") + sid)
             if mark.startswith("?"):
@@ -2324,19 +2903,26 @@ class ChatPanel(QtWidgets.QWidget):
         w.setStyleSheet("background:transparent;")
         l = QtWidgets.QHBoxLayout(w); l.setContentsMargins(10, 0, 10, 0); l.setSpacing(8)
         m = QtWidgets.QLabel(mark.strip()); m.setFixedWidth(12 if mark else 0)
-        m.setStyleSheet("color:%s;font-size:12px;" % ("#d9a548" if mark.startswith("?") else "#ff4f9a"))
+        col = {"?": "#d9a548", "•": "#6aa5ff", "!": "#e5675f"}.get(mark[:1], "#ff4f9a")
+        m.setStyleSheet("color:%s;font-size:%s;font-weight:700;" % (col, "16px" if mark[:1] in "•!" else "12px"))
+        if mark[:1] == "•":
+            m.setToolTip("Finished while you were away")
         t = QtWidgets.QLabel(); t.setStyleSheet("color:#ece9e3;font-size:13px;")
-        t.setText(t.fontMetrics().elidedText(title, QtCore.Qt.ElideRight, 170))
+        f = QtGui.QFont(self.font()); f.setPixelSize(13)            # the size the stylesheet draws it at
+        t.setText(QtGui.QFontMetrics(f).elidedText(title, QtCore.Qt.ElideRight, 150 if mark else 165))
         a = QtWidgets.QLabel(self._ago(mtime)); a.setStyleSheet("color:#77756f;font-size:12px;")
         l.addWidget(m); l.addWidget(t, 1); l.addWidget(a)
         it.setData(QtCore.Qt.UserRole + 3, m)
         return w
 
     def _tick(self):
-        """Spin the marks on working conversations."""
+        """Spin the marks on working conversations, tick the Working line, flush queues."""
+        self._flush_queues()
         if not any(c.working for c in self.convos):
             return
         self._spin += 1
+        if self.cur is not None and self._spin % 4 == 0:
+            self.cur.tick_working(self._spin // 4)
         for i in range(self.list.count()):
             it = self.list.item(i)
             if it.data(QtCore.Qt.UserRole + 2) == "spin":
@@ -2360,13 +2946,14 @@ class ChatPanel(QtWidgets.QWidget):
             self.cur.set_model(None if m == "default" else m); self.cur.add_note("model -> %s" % m)
             self.composer.clear(); self.convo_changed(self.cur); return
         imgs = list(self.composer.images)
-        self.cur.send(text, imgs)
+        self.cur.send(text, imgs)            # queued (and shown above the box) if a turn is running
         self.composer.clear(); self.composer.images = []; self.refresh_chips()
         QtCore.QTimer.singleShot(1500, self.refresh_sessions)     # the transcript file appears on disk
 
     def interrupt(self):
         if self.cur is not None and self.cur.busy:
             self.session.control("interrupt")
+            self.cur.stopped = True
             self.cur._expire_asks("Cancelled - you stopped the turn")
             self.cur.add_note("Stopped.", "#e5675f")
             self.convo_changed(self.cur)

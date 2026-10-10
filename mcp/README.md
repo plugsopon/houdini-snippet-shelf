@@ -258,3 +258,28 @@ inserted at the cursor; you still press Send.
   No `houdini_use_session` needed. `houdini_sessions` shows `pinned_by_chat`.
 - Connect / Disconnect were removed from the FX AI menu and shelf. `brother_link.stop()` in the
   Python Shell still stops it.
+
+## Dremzo Code look + the 10 missing features (2026-10-10)
+
+The panel now uses Dremzo Code's tokens and layout (sidebar, 44px title bar, 760px centred
+column, send button in the composer row). Thai renders in **Leelawadee UI**: Segoe UI has no Thai,
+and Qt stylesheets ignore a font set with `setFont`, so it must be the stylesheet's family.
+
+| # | Feature | Where |
+|---|---|---|
+| 1 | Messages sent during a turn are **queued** above the box (Send now / remove); Ctrl+Enter = stop and send | `Convo.send`, `refresh_queue`, `_flush_queues` |
+| 2 | **Taskbar flash + Windows toast** when a turn finishes or asks, and you aren't looking | `ChatPanel.notify` |
+| 3 | **Unread** blue dot / red `!` on chats that finished while away | `refresh_sessions`, `Convo.unread` |
+| 4 | **Drag and drop** images (attached), other files (`@path`), node paths (text) | `Composer.take_drop` |
+| 5 | **Edited N files** card after a turn, rows open the diff, Open opens the file | `EditedCard`, `_track_edit` |
+| 6 | **Search chats** by title or anything said in them (Ctrl+K) | `session_text`, `refresh_sessions` |
+| 7 | **Find in chat** (Ctrl+F, Enter / Shift+Enter, Esc) | `FindBar` |
+| 8 | **Pin / Archive / Delete** (delete moves to `~/.houdini_brother/trash`) | `_history_menu`, `chat_state.json` |
+| 9 | **Working 23s** line + **Jump to latest** | `Convo._working`, `_place_jump` |
+| 10 | Keys: arrows/Tab/Enter in the `/` popup, **1/2/3** on approvals, Ctrl+Tab / Alt+arrows between chats | `Composer.keyPressEvent`, `step_chat` |
+
+A Stop ends the turn with `result/error_during_execution` (measured against CLI 2.1.288): it is
+not shown as an error. The desktop CLI moved to `claude-code/<ver>/<build hash>/claude.exe`;
+`_desktop_cli` checks both layouts (it had silently fallen back to the old npm CLI).
+
+Test: `hython tests/test_chat_panel_features.py` - 34 checks against a fake session, offscreen.
