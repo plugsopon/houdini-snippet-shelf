@@ -996,7 +996,7 @@ class Convo(QtCore.QObject):
     """One conversation: its own claude process, feed, model and permission mode. Several can
     run at once; the panel only decides which one is on screen."""
 
-    def __init__(self, panel, resume=None, title="New session", model=None, fork=False, effort=None):
+    def __init__(self, panel, resume=None, title="New chat", model=None, fork=False, effort=None):
         super().__init__(panel)
         self.fork = fork
         self.effort = effort
@@ -2515,11 +2515,11 @@ class ChatPanel(QtWidgets.QWidget):
     def new_session(self):
         # reuse an untouched new session instead of stacking empty ones
         for c in self.convos:
-            if c.title == "New session" and not c.working and c.feed.count() <= 3 and c.mode == "default":
+            if c.title == "New chat" and not c.working and c.feed.count() <= 3 and c.mode == "default":
                 self._show(c); return
         c = Convo(self, model=self.default_model)
         self.convos.append(c)
-        c.add_note("New session in %s - Brother can see and drive this Houdini." % self.cwd)
+        c.add_note("New chat in %s - Brother can see and drive this Houdini." % self.cwd)
         c.start()
         self._show(c)
 
@@ -2531,7 +2531,7 @@ class ChatPanel(QtWidgets.QWidget):
             return
         c = self._convo_for(sid)
         if c is None:                               # first time opened this Houdini: replay + resume
-            c = Convo(self, resume=sid, title=item.data(QtCore.Qt.UserRole + 1) or "Session",
+            c = Convo(self, resume=sid, title=item.data(QtCore.Qt.UserRole + 1) or "Chat",
                       model=self.default_model)
             self.convos.append(c)
             c.load(sid)
@@ -2766,7 +2766,7 @@ class ChatPanel(QtWidgets.QWidget):
         if got is dele:
             self.delete_session(sid, title); return
         if got is ren:
-            new, ok = QtWidgets.QInputDialog.getText(self, "Rename session", "Title:", text=title)
+            new, ok = QtWidgets.QInputDialog.getText(self, "Rename chat", "Title:", text=title)
             if ok and new.strip():
                 c = self._convo_for(sid)
                 if c is None:
@@ -2775,17 +2775,17 @@ class ChatPanel(QtWidgets.QWidget):
                 c.rename(new.strip())
                 self._show(c)
         elif got is fork:
-            c = Convo(self, resume=sid, title="Fork of " + (title or "session"), model=self.default_model,
+            c = Convo(self, resume=sid, title="Fork of " + (title or "chat"), model=self.default_model,
                       fork=True)
             self.convos.append(c)
             c.load(sid)
-            c.add_note("Forked - this is a new session; the original is untouched.", "#6aa5ff")
+            c.add_note("Forked - this is a new chat; the original is untouched.", "#6aa5ff")
             c.start()
             self._show(c)
 
     def convo_changed(self, c, finished=False):
         """Any conversation's state moved: refresh the list marks, and the header if it's on screen."""
-        if finished and c.title == "New session":
+        if finished and c.title == "New chat":
             for sid, title, _m in list_sessions(self.cwd, limit=20):
                 if sid == c.sid:
                     c.title = title
