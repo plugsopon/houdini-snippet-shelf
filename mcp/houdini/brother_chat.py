@@ -2848,6 +2848,7 @@ class ChatPanel(QtWidgets.QWidget):
         archived = [r for r in allrows if r[0] in self.state["archived"] and r[0] not in self.state["pinned"]]
         rest = [r for r in allrows if r not in pinned and r not in archived]
         self.list.clear()
+        self._marks = {}
         plan = []
         if pinned:
             plan += [("::head", "Pinned", None)] + pinned
@@ -2912,7 +2913,9 @@ class ChatPanel(QtWidgets.QWidget):
         t.setText(QtGui.QFontMetrics(f).elidedText(title, QtCore.Qt.ElideRight, 150 if mark else 165))
         a = QtWidgets.QLabel(self._ago(mtime)); a.setStyleSheet("color:#77756f;font-size:12px;")
         l.addWidget(m); l.addWidget(t, 1); l.addWidget(a)
-        it.setData(QtCore.Qt.UserRole + 3, m)
+        # NOT it.setData(role, m): Houdini's PySide refuses a QWidget in a QVariant ("tried to use
+        # invalid converter in 'Python to C++' conversion") - hython offscreen let it through
+        self._marks[it.data(QtCore.Qt.UserRole)] = m
         return w
 
     def _tick(self):
@@ -2926,7 +2929,7 @@ class ChatPanel(QtWidgets.QWidget):
         for i in range(self.list.count()):
             it = self.list.item(i)
             if it.data(QtCore.Qt.UserRole + 2) == "spin":
-                lab = it.data(QtCore.Qt.UserRole + 3)
+                lab = getattr(self, "_marks", {}).get(it.data(QtCore.Qt.UserRole))
                 if lab is not None:
                     try:
                         lab.setText(SPIN[self._spin % len(SPIN)])
