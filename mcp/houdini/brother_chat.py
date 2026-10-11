@@ -21,7 +21,7 @@ One process stays alive across turns; a session switch starts a new one with --r
 The houdini-live MCP server (this repo's .mcp.json) is passed with --mcp-config, so the model
 can inspect and drive THIS Houdini through brother_link - with the cursor and the screen edges.
 """
-import base64, datetime, glob, json, os, re, shutil, sys, time, uuid
+import base64, collections, datetime, glob, json, os, re, shutil, sys, time, uuid
 
 import hou
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -125,40 +125,310 @@ def project_dir(cwd):
 def _text_of(content):
     if isinstance(content, str):
         return content
+    if not isinstance(content, list):
+        return ""
     out = []
-    for b in content or []:
-        if isinstance(b, dict) and b.get("type") == "text":
-            out.append(b.get("text", ""))
+    for b in content:
+        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str):
+            out.append(b["text"])
     return "\n".join(out)
 
 
-def list_sessions(cwd, limit=60):
-    """Past sessions for this cwd, newest first: (session_id, title, mtime)."""
-    rows = []
-    for path in glob.glob(os.path.join(project_dir(cwd), "*.jsonl")):
-        sid = os.path.splitext(os.path.basename(path))[0]
-        title = None
-        try:
-            with open(path, encoding="utf8", errors="replace") as fh:
-                for n, line in enumerate(fh):
-                    if n > 400:
-                        break
-                    try:
-                        o = json.loads(line)
-                    except ValueError:
+_ACTIVITY = {}              # path -> ((mtime, size), last-message time)
+
+
+def _iso_ts(s):
+    """A transcript timestamp as epoch seconds, or None. A time before 1970 is not a real CLI time
+    (and datetime.fromtimestamp of it raises on Windows, which would stop the list being built)."""
+    try:
+        t = datetime.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError, OSError):   # Windows: OSError for a naive pre-1970 time
+        return None
+    return t if t >= 0 else None
+
+
+def _obj(raw):
+    """One transcript line as a dict, or None (bad JSON, JSON that is not an object, or JSON too
+    deeply nested to parse)."""
+    try:
+        o = json.loads(raw)
+    except (ValueError, RecursionError):
+        return None
+    return o if isinstance(o, dict) else None
+
+
+def _str(v):
+    return v if isinstance(v, str) else ""
+
+
+def _complete_lines(fh, start, rest):
+    """Complete lines from byte `start` on, as (line, offset just past its newline). A line longer
+    than one read is gathered in pieces and joined once (re-copying it per read was quadratic).
+    The unfinished last line, if any, is left in rest["tail"]."""
+    fh.seek(start)
+    off, pieces = start, []
+    while True:
+        block = fh.read(4 * 1024 * 1024)
+        if not block:
+            break
+        first = block.find(b"\n")
+        if first < 0:
+            pieces.append(block)
+            continue
+        raw = b"".join(pieces) + block[:first] if pieces else block[:first]
+        pieces = []
+        off += len(raw) + 1
+        yield raw, off
+        last = block.rfind(b"\n")
+        if last > first:
+            for raw in block[first + 1:last].split(b"\n"):
+                off += len(raw) + 1
+                yield raw, off
+        if last + 1 < len(block):
+            pieces.append(block[last + 1:])
+    rest["tail"] = b"".join(pieces)
+
+
+def _head(path, n=256):
+    """The first bytes of a transcript: it only ever grows, so if these change it was rewritten."""
+    with open(path, "rb") as fh:
+        return fh.read(n)
+
+
+def _rewritten(c, path, size):
+    """Did a cached transcript get rewritten (not just appended to) since c was made? Updates the
+    cached head while a young file is still shorter than it."""
+    if size < c["off"]:
+        return True
+    new = _head(path)
+    if not new.startswith(c["head"]):
+        return True
+    c["head"] = new
+    return False
+
+
+_ACTIVITY_SCAN_CAP = 32 * 1024 * 1024
+
+
+def last_activity(path):
+    """When the chat last had a real message (user or assistant line) - NOT the file's mtime.
+
+    Opening a chat changes its file without adding a message: the CLI touches the file about 1.5s
+    after it starts and appends a cost-state line (no timestamp) when it closes. So sorting by mtime
+    moved each chat you clicked to the top and stamped them all "1m" (measured 2026-10-11 against
+    CLI 2.1.288: four chats touched 13:01:55-13:02:00 whose last messages were 28 Sep .. 10 Oct).
+    Reads the file backwards, cached by (mtime, size)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return 0.0
+    key = (st.st_mtime, st.st_size)
+    hit = _ACTIVITY.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    ts, size, pos = None, st.st_size, st.st_size
+    tail = collections.deque()          # pieces of a line longer than one read, in file order
+    try:
+        with open(path, "rb") as fh:
+            while pos > 0 and ts is None and size - pos < _ACTIVITY_SCAN_CAP:
+                step = min(256 * 1024, pos)
+                pos -= step
+                fh.seek(pos)
+                chunk = fh.read(step)
+                if pos > 0 and b"\n" not in chunk:
+                    tail.appendleft(chunk)               # still inside one long line: keep going back
+                    continue
+                lines = (chunk + b"".join(tail)).split(b"\n")
+                tail.clear()
+                if pos > 0:
+                    tail.append(lines.pop(0))            # may be cut mid-line: finish it next round
+                for raw in reversed(lines):
+                    if b'"timestamp"' not in raw:
                         continue
-                    if o.get("type") in ("custom-title", "summary") and (o.get("customTitle") or o.get("summary")):
-                        title = o.get("customTitle") or o.get("summary")
-                        break
-                    if title is None and o.get("type") == "user" and not o.get("isMeta"):
-                        t = _text_of((o.get("message") or {}).get("content")).strip()
-                        if t and not t.startswith("<") and not t.startswith("Caveat:"):
-                            title = t
-        except OSError:
+                    o = _obj(raw)
+                    if o is not None and o.get("type") in ("user", "assistant"):
+                        ts = _iso_ts(o.get("timestamp"))
+                        if ts is not None:
+                            break
+    except OSError:                       # locked or vanished mid-read: answer, but don't remember it
+        return hit[1] if hit else st.st_mtime
+    if ts is None:
+        # nothing dated within reach: keep what we knew (a giant last line must not throw the chat
+        # back to the top), and only a file with no dated message at all uses its file time
+        ts = hit[1] if hit else st.st_mtime
+    _ACTIVITY[path] = (key, ts)
+    return ts
+
+
+_TITLES = {}    # path -> {"off", "size", "mtime", "head", "first", "first_done", "custom"}
+_FIRST_TITLE_LINES = 400
+
+
+def _first_title(path):
+    """The first real user message within the first 400 lines -> (title, settled).
+
+    settled=False means "not known YET": the file is still shorter than the window (a brand-new
+    chat's file holds two queue-operation lines for ~30-120 ms before its first user line), so the
+    caller must ask again when the file grows. Caching that None for good made a new chat vanish
+    from the list until Houdini restarted."""
+    with open(path, "rb") as fh:
+        for n, raw in enumerate(fh):
+            if n > _FIRST_TITLE_LINES:
+                return None, True
+            if b'"summary"' not in raw and b'"user"' not in raw:
+                continue                                  # most lines: no need to parse them
+            o = _obj(raw)
+            if o is None:
+                continue
+            if o.get("type") == "summary" and _str(o.get("summary")).strip():
+                return o["summary"], True
+            if o.get("type") == "user" and not o.get("isMeta"):
+                msg = o.get("message")
+                t = _text_of(msg.get("content") if isinstance(msg, dict) else None).strip()
+                if t and not t.startswith("<") and not t.startswith("Caveat:"):
+                    return t, True
+    return None, False
+
+
+def _custom_title_of(raw):
+    o = _obj(raw)
+    if o is not None and o.get("type") == "custom-title" and _str(o.get("customTitle")).strip():
+        return o["customTitle"]
+    return None
+
+
+_RENAME = b'"customTitle":'     # unescaped: a chat that merely MENTIONS custom-title doesn't match
+_RSCAN_BLOCK = 8 * 1024 * 1024
+
+
+def _rfind_newline(fh, end):
+    """Offset of the last newline before byte `end`, or -1."""
+    pos = end
+    while pos > 0:
+        lo = max(0, pos - 65536)
+        fh.seek(lo)
+        i = fh.read(pos - lo).rfind(b"\n")
+        if i >= 0:
+            return lo + i
+        pos = lo
+    return -1
+
+
+def _find_newline(fh, start, size):
+    """Offset of the first newline at or after byte `start`, or -1."""
+    pos = start
+    while pos < size:
+        fh.seek(pos)
+        buf = fh.read(min(65536, size - pos))
+        if not buf:
+            break
+        i = buf.find(b"\n")
+        if i >= 0:
+            return pos + i
+        pos += len(buf)
+    return -1
+
+
+def _last_custom_title(path):
+    """First look at a transcript: its LATEST rename, found by searching backwards in big blocks
+    (bytes.rfind, C speed) instead of splitting every line in Python - the first refresh after a
+    Houdini start reads every chat, and the line-by-line scan took ~10 s on a 2 GB folder.
+    Plain reads on purpose: an mmap blocked the CLI from truncating or rewriting the transcript
+    (it does, to remove a tombstoned line) for as long as the file was mapped.
+    -> (title or None, offset just past the last complete line)."""
+    with open(path, "rb") as fh:
+        size = os.fstat(fh.fileno()).st_size
+        done = _rfind_newline(fh, size) + 1
+        pos, k = size, len(_RENAME)
+        while pos > 0:
+            lo = max(0, pos - _RSCAN_BLOCK)
+            fh.seek(lo)
+            buf = fh.read(min(size, pos + k - 1) - lo)    # + a key that straddles `pos`
+            j, nxt = len(buf), lo
+            while True:
+                i = buf.rfind(_RENAME, 0, j)
+                if i < 0:
+                    break
+                if lo + i >= pos:                         # already seen in the window after this one
+                    j = i
+                    continue
+                ls = _rfind_newline(fh, lo + i) + 1
+                le = _find_newline(fh, lo + i, size)
+                fh.seek(ls)
+                t = _custom_title_of(fh.read((le if le >= 0 else size) - ls))
+                if t is not None:
+                    return t, done
+                if ls < lo:                               # that line started before this window
+                    nxt = ls
+                    break
+                j = ls - lo                               # look before that line
+            pos = min(nxt, lo)
+    return None, done
+
+
+def _latest_custom_title(path, start, current):
+    """A Rename appends a custom-title line at the END of the file, so a long chat's new name was
+    past the 400-line window and came back as the old title after a restart. Only the bytes
+    appended since `start` (always a line start) are read; the latest custom-title wins.
+    -> (title, offset just past the last COMPLETE line read). A line still being written is left
+    for the next call to read whole, instead of being skipped as a broken fragment."""
+    if start == 0:
+        t, off = _last_custom_title(path)
+        return (t if t is not None else current), off
+    off, rest = start, {"tail": b""}
+    with open(path, "rb") as fh:
+        for raw, off in _complete_lines(fh, start, rest):
+            if _RENAME in raw:
+                current = _custom_title_of(raw) or current
+    if _RENAME in rest["tail"]:                   # last line, no newline yet: use it if it parses,
+        current = _custom_title_of(rest["tail"]) or current   # but read it again next time
+    return current, off
+
+
+def session_title(path):
+    """Cached per file; growth only scans the new bytes. None = not a real session (no user turn)."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    size, mt = st.st_size, st.st_mtime
+    c = _TITLES.get(path)
+    try:
+        if c is not None and (size, mt) != (c["size"], c["mtime"]) and _rewritten(c, path, size):
+            c = None                                  # rewritten, not appended to: start over
+        if c is None:
+            c = {"off": 0, "size": -1, "mtime": None, "head": _head(path), "first": None,
+                 "first_done": False, "custom": None}
+        if (size, mt) != (c["size"], c["mtime"]):
+            if not c["first_done"]:
+                c["first"], c["first_done"] = _first_title(path)
+            if size > c["off"]:                      # an unfinished last line is re-read next time
+                c["custom"], c["off"] = _latest_custom_title(path, c["off"], c["custom"])
+            c["size"], c["mtime"] = size, mt
+    except (OSError, ValueError):
+        return None
+    _TITLES[path] = c
+    return c["custom"] or c["first"]
+
+
+def list_sessions(cwd, limit=60):
+    """Past sessions for this cwd, newest first: (session_id, title, last-message time)."""
+    rows = []
+    folder = project_dir(cwd)
+    paths = glob.glob(os.path.join(folder, "*.jsonl"))
+    for path in paths:
+        sid = os.path.splitext(os.path.basename(path))[0]
+        try:
+            title = session_title(path)
+            if title is None:        # no user turn (a stub a closing process left behind): not a session
+                continue
+            rows.append((sid, title.splitlines()[0][:80], last_activity(path)))
+        except Exception:            # one unreadable file must not empty the whole list
             continue
-        if title is None:            # no user turn (a stub a closing process left behind): not a session
-            continue
-        rows.append((sid, title.splitlines()[0][:80], os.path.getmtime(path)))
+    live = set(paths)
+    for cache in (_ACTIVITY, _TITLES, _SEARCH_CACHE):          # chats deleted outside the panel
+        for p in [p for p in cache if os.path.dirname(p) == folder and p not in live]:
+            cache.pop(p, None)
     rows.sort(key=lambda r: r[2], reverse=True)
     return rows[:limit]
 
@@ -185,31 +455,64 @@ def save_state(st):
         json.dump(st, fh, indent=1)
 
 
-_SEARCH_CACHE = {}          # path -> (mtime, lowercased text)
+_SEARCH_CACHE = {}  # path -> {"off": bytes indexed (a line start), "size", "mtime", "head", "text"}
+_SAID = re.compile(rb'"type":\s*"(?:user|assistant|custom-title|summary)"')
+
+
+def _said(o):
+    """The words in one transcript line: what you or Claude wrote, or a rename / summary."""
+    t = o.get("type")
+    if t in ("user", "assistant"):
+        msg = o.get("message")
+        return _text_of(msg.get("content") if isinstance(msg, dict) else None)
+    if t == "custom-title":
+        return _str(o.get("customTitle"))
+    if t == "summary":
+        return _str(o.get("summary"))
+    return ""
 
 
 def session_text(cwd, sid):
-    """A chat's transcript, lowercased, for search across chats (cached by mtime)."""
+    """What was SAID in a chat (your messages, Claude's text, renames), lowercased, for search
+    across chats. Indexed incrementally - a growing chat only reads its new lines, in bounded
+    reads - and the whole file is covered: the old raw-JSON index stopped at 6 MB, so the newest
+    half of a long chat could not be found, and it matched tool payloads nobody said."""
     path = os.path.join(project_dir(cwd), sid + ".jsonl")
     try:
-        mt = os.path.getmtime(path)
+        st = os.stat(path)
     except OSError:
+        _SEARCH_CACHE.pop(path, None)
         return ""
-    hit = _SEARCH_CACHE.get(path)
-    if hit and hit[0] == mt:
-        return hit[1]
+    size, mt = st.st_size, st.st_mtime
+    c = _SEARCH_CACHE.get(path)
     try:
-        with open(path, encoding="utf8", errors="replace") as fh:
-            txt = fh.read(6 * 1024 * 1024)
+        if c is not None and (size, mt) != (c["size"], c["mtime"]) and _rewritten(c, path, size):
+            c = None
+        if c is None:
+            c = {"off": 0, "size": -1, "mtime": None, "head": _head(path), "text": ""}
+        if size > c["off"] and (size, mt) != (c["size"], c["mtime"]):
+            new, rest, off = [], {"tail": b""}, c["off"]
+            with open(path, "rb") as fh:
+                for raw, off in _complete_lines(fh, c["off"], rest):   # complete lines only;
+                    if _SAID.search(raw):                              # the rest waits
+                        o = _obj(raw)
+                        t = _said(o) if o is not None else ""
+                        if t:
+                            new.append(t.lower())
+            if new:
+                c["text"] = (c["text"] + "\n" if c["text"] else "") + "\n".join(new)
+            c["off"] = off
+        c["size"], c["mtime"] = size, mt
     except OSError:
-        txt = ""
-    try:                      # the jsonl escapes non-ASCII; undo that so Thai matches too
-        txt = txt.encode("ascii", "backslashreplace").decode("unicode_escape", "replace")
-    except Exception:
-        pass
-    txt = txt.lower()
-    _SEARCH_CACHE[path] = (mt, txt)
-    return txt
+        return c["text"] if c is not None else ""
+    _SEARCH_CACHE[path] = c
+    return c["text"]
+
+
+def forget_session_file(path):
+    """Drop every cache entry for a transcript (deleted, or gone from disk)."""
+    for cache in (_ACTIVITY, _TITLES, _SEARCH_CACHE):
+        cache.pop(path, None)
 
 
 def load_transcript(cwd, sid):
@@ -479,6 +782,14 @@ QListWidget { background: transparent; border: none; color: #ece9e3; font-size: 
 QListWidget::item { border-radius: 8px; margin: 1px 0; }
 QListWidget::item:selected { background: #30302e; }
 QListWidget::item:hover { background: #353532; }
+QLabel#listhead { color: #77756f; font-size: 12px; padding: 8px 0 0 12px; background: transparent; }
+QWidget#listrow { background: transparent; }
+QLabel#rowtitle { color: #ece9e3; font-size: 13px; background: transparent; }
+QLabel#rowage { color: #77756f; font-size: 12px; background: transparent; }
+QLabel#rowmark { color: #ff4f9a; font-size: 12px; font-weight: 700; background: transparent; }
+QLabel#rowmark[kind="wait"] { color: #d9a548; }
+QLabel#rowmark[kind="done"] { color: #6aa5ff; font-size: 16px; }
+QLabel#rowmark[kind="error"] { color: #e5675f; font-size: 16px; }
 QPlainTextEdit#composer { background: transparent; color: #ece9e3; border: none; padding: 2px; font-size: 14px; }
 QFrame#composerBox { background: #30302e; border: 1px solid #3a3935; border-radius: 16px; }
 QFrame#ctxStrip { background: #1f1e1d; border: 1px solid #2f2e2b; border-bottom: none;
@@ -2193,6 +2504,18 @@ class ChatPanel(QtWidgets.QWidget):
         self.models = {}                     # model value -> the CLI's description of it
         self.model_list = []
         self._spin = 0
+        # the chat list: what is drawn now, so a refresh that changes nothing touches nothing
+        self._list_sig = None                # (sid, title, mark kind) per row, in order
+        self._list_sel = None                # the chat highlighted last time
+        self._list_q = ""                    # the search the list was built for
+        self._click_sid = None               # the row the mouse just clicked (see _row_clicked)
+        self._marks = {}                     # sid -> its mark label (the spinner turns it)
+        self._ages = {}                      # sid -> (age label, last-message time)
+        self._ages_at = 0.0
+        # every event of a turn used to rebuild the list (~9 per reply, ~200 ms each at 60 chats);
+        # event-driven refreshes now land together, once, a moment later
+        self._refresh_timer = QtCore.QTimer(self); self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.setInterval(60); self._refresh_timer.timeout.connect(self.refresh_sessions)
         # Dremzo Code's stack: Segoe UI for Latin, Leelawadee UI for Thai (Segoe UI has no Thai, and
         # Qt's own fallback picks a font that renders Thai about half the size)
         f = QtGui.QFont(); f.setFamilies(["Segoe UI", "Leelawadee UI", "Tahoma"]); f.setPixelSize(14)
@@ -2250,7 +2573,7 @@ class ChatPanel(QtWidgets.QWidget):
         sl.addSpacing(6)
         self.state = load_state()
         self.show_archived = False
-        self.list = QtWidgets.QListWidget(); self.list.itemClicked.connect(self._pick_session)
+        self.list = QtWidgets.QListWidget(); self.list.itemClicked.connect(self._row_clicked)
         self.list.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._history_menu)
         self.list.setToolTip("Right-click a chat to rename or fork it")
@@ -2544,6 +2867,7 @@ class ChatPanel(QtWidgets.QWidget):
         for src in (base + ".jsonl", base):
             if os.path.exists(src):
                 shutil.move(src, os.path.join(TRASH_DIR, os.path.basename(src)))
+        forget_session_file(base + ".jsonl")
         for key in ("pinned", "archived"):
             if sid in self.state[key]:
                 self.state[key].remove(sid)
@@ -2618,6 +2942,13 @@ class ChatPanel(QtWidgets.QWidget):
         c.add_note("New chat in %s - Brother can see and drive this Houdini." % self.cwd)
         c.start()
         self._show(c)
+
+    def _row_clicked(self, item):
+        # remembered so the highlight that follows does not scroll: the row is under the mouse
+        # already, and scrolling a half-visible bottom row put the NEXT chat under it (a double-
+        # click then opened the neighbour)
+        self._click_sid = item.data(QtCore.Qt.UserRole)
+        self._pick_session(item)
 
     def _pick_session(self, item):
         sid = item.data(QtCore.Qt.UserRole)
@@ -2900,11 +3231,11 @@ class ChatPanel(QtWidgets.QWidget):
 
     def convo_changed(self, c, finished=False):
         """Any conversation's state moved: refresh the list marks, and the header if it's on screen."""
-        if finished and c.title == "New chat":
-            for sid, title, _m in list_sessions(self.cwd, limit=20):
-                if sid == c.sid:
-                    c.title = title
-        self.refresh_sessions()
+        if finished and c.title == "New chat" and c.sid:
+            t = session_title(os.path.join(project_dir(self.cwd), c.sid + ".jsonl"))
+            if t:
+                c.title = t.splitlines()[0][:80]
+        self.refresh_soon()
         if c is not self.cur:
             return
         self.head_title.setText(c.title)
@@ -2950,8 +3281,30 @@ class ChatPanel(QtWidgets.QWidget):
             self.limit_bar.setText("Getting close to the Claude %s limit%s%s." % (kind, pct, when))
         self.limit_bar.show()
 
+    def refresh_soon(self):
+        """Refresh the list a moment from now; a burst of events (a turn's init, task, answer,
+        result, context...) becomes ONE refresh."""
+        self._refresh_timer.start()
+
+    def _mark_kind(self, sid):
+        c = self._convo_for(sid)
+        if c is None:
+            return ""
+        if c.waiting:
+            return "wait"
+        if c.working:
+            return "spin"
+        if c.unread:
+            return "error" if c.unread == "error" else "done"
+        return ""
+
     def refresh_sessions(self):
-        sel = self.cur.sid if self.cur is not None else None
+        """Rebuild the chat list - only when what it shows changed. A refresh that changes nothing
+        touches no row, and a rebuild keeps the scroll position: clearing the list threw it back to
+        the top, so the row under the mouse changed after every click (2026-10-11)."""
+        self._refresh_timer.stop()                   # this refresh covers any that was pending
+        # an unsent fork still carries the ORIGINAL chat's id until its first turn: highlight nothing
+        sel = self.cur.sid if (self.cur is not None and not self.cur.fork) else None
         rows = list_sessions(self.cwd)
         on_disk = {sid for sid, _t, _m in rows}
         # live conversations not written to disk yet go on top
@@ -2963,8 +3316,6 @@ class ChatPanel(QtWidgets.QWidget):
         pinned = [r for r in allrows if r[0] in self.state["pinned"]]
         archived = [r for r in allrows if r[0] in self.state["archived"] and r[0] not in self.state["pinned"]]
         rest = [r for r in allrows if r not in pinned and r not in archived]
-        self.list.clear()
-        self._marks = {}
         plan = []
         if pinned:
             plan += [("::head", "Pinned", None)] + pinned
@@ -2973,70 +3324,203 @@ class ChatPanel(QtWidgets.QWidget):
             plan += [("::archived", "%s Archived (%d)" % ("▾" if self.show_archived else "▸", len(archived)), None)]
             if self.show_archived:
                 plan += archived
-        for sid, title, mtime in plan:
-            if str(sid).startswith("::"):
-                it = QtWidgets.QListWidgetItem(); it.setData(QtCore.Qt.UserRole, sid)
-                if sid == "::head":
-                    it.setFlags(QtCore.Qt.NoItemFlags)
-                self.list.addItem(it); it.setSizeHint(QtCore.QSize(10, 30))
-                lab = QtWidgets.QLabel(title); lab.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-                lab.setStyleSheet("color:#77756f;font-size:12px;padding:8px 0 0 12px;background:transparent;")
-                self.list.setItemWidget(it, lab)
-                continue
-            c = self._convo_for(sid)
-            mark = ""
-            if c is not None and c.waiting:
-                mark = "?  "
-            elif c is not None and c.working:
-                mark = SPIN[self._spin % len(SPIN)] + "  "
-            elif c is not None and c.unread:
-                mark = ("!" if c.unread == "error" else "•") + "  "
-            it = QtWidgets.QListWidgetItem()
-            it.setData(QtCore.Qt.UserRole, sid)
-            it.setData(QtCore.Qt.UserRole + 1, title)
-            it.setData(QtCore.Qt.UserRole + 2, "wait" if mark.startswith("?") else
-                       "spin" if (mark and mark[:1] not in "•!") else "")
-            it.setToolTip(("Waiting for your answer - " if mark.startswith("?") else
-                           "Working... - " if mark else "") + sid)
-            if mark.startswith("?"):
-                it.setForeground(QtGui.QColor("#d9a548"))
-            elif mark:
-                it.setForeground(QtGui.QColor("#ff4f9a"))
-            self.list.addItem(it)
-            it.setSizeHint(QtCore.QSize(10, 32))
-            self.list.setItemWidget(it, self._row(mark, title, mtime, it))
-            if sid == sel:
-                it.setSelected(True)
+        kinds = {sid: self._mark_kind(sid) for sid, _t, _m in plan if not str(sid).startswith("::")}
+        sig = tuple((sid, title, kinds.get(sid, "")) for sid, title, _m in plan)
+        new_query = q != self._list_q
+        self._list_q = q
+        if sig != self._list_sig:
+            # a different search is a different list: it opens at its top, not at the old offset
+            self._rebuild_list(plan, kinds, top=new_query)
+            self._list_sig = sig
+        else:                                        # same rows: only the ages may have moved
+            for sid, _title, t in plan:
+                if sid in self._ages and t is not None:
+                    self._ages[sid] = (self._ages[sid][0], t)
+            self._refresh_ages()
+        # clearing a search lands on the chat you opened from its results
+        self._select_row(sel, reveal=new_query and not q)
+
+    @staticmethod
+    def _row_key(it):
+        return (it.data(QtCore.Qt.UserRole), it.data(QtCore.Qt.UserRole + 1))
+
+    def _visible_rows(self):
+        """The rows on screen now: (key, index, top y in the viewport)."""
+        vr, out = self.list.viewport().rect(), []
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            r = self.list.visualItemRect(it)
+            if r.intersects(vr):
+                out.append((self._row_key(it), i, r.top()))
+            elif out:
+                break
+        return out
+
+    def _hold_rows(self, before):
+        """After a rebuild, scroll so the rows that were on screen are where they were. Keeping the
+        scroll VALUE is not enough: a chat that jumps to the top inserts a row above the view and
+        slides every row under the mouse down one. The anchor is a visible row that moved with the
+        majority (not the chat that jumped), preferring the one under the mouse."""
+        if not before:
+            return False
+        new = {self._row_key(self.list.item(i)): i for i in range(self.list.count())}
+        moves = [new[k] - i for k, i, _y in before if k in new]
+        if not moves:
+            return False
+        common = collections.Counter(moves).most_common(1)[0][0]
+        cands = [(k, y) for k, i, y in before if k in new and new[k] - i == common]
+        mouse = self.list.viewport().mapFromGlobal(QtGui.QCursor.pos())
+        if self.list.viewport().rect().contains(mouse):
+            under = [(k, y) for k, y in cands if y <= mouse.y()]
+            if under:
+                cands = [under[-1]]
+        key, y0 = cands[0]
+        it = self.list.item(new[key])
+        bar = self.list.verticalScrollBar()
+        if self.list.verticalScrollMode() == QtWidgets.QAbstractItemView.ScrollPerPixel:
+            bar.setValue(bar.value() + self.list.visualItemRect(it).top() - y0)
+            return True
+        best = None                                  # per-item scrolling: the closest whole-row offset
+        for v in range(min(new[key], bar.maximum()), -1, -1):
+            bar.setValue(v)
+            top = self.list.visualItemRect(it).top()
+            if best is None or abs(top - y0) < best[0]:
+                best = (abs(top - y0), v)
+            if top >= y0:
+                break
+        bar.setValue(best[1])
+        return True
+
+    def _rebuild_list(self, plan, kinds, top=False):
+        bar = self.list.verticalScrollBar()
+        keep = 0 if top else bar.value()
+        before = [] if top else self._visible_rows()
+        self.list.setUpdatesEnabled(False)
+        try:
+            self.list.clear()
+            self._marks, self._ages = {}, {}
+            for sid, title, t in plan:
+                if str(sid).startswith("::"):
+                    it = QtWidgets.QListWidgetItem(); it.setData(QtCore.Qt.UserRole, sid)
+                    it.setData(QtCore.Qt.UserRole + 1, title)
+                    if sid == "::head":
+                        it.setFlags(QtCore.Qt.NoItemFlags)
+                    self.list.addItem(it); it.setSizeHint(QtCore.QSize(10, 30))
+                    lab = QtWidgets.QLabel(title, objectName="listhead")
+                    lab.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+                    self.list.setItemWidget(it, lab)
+                    continue
+                kind = kinds.get(sid, "")
+                it = QtWidgets.QListWidgetItem()
+                it.setData(QtCore.Qt.UserRole, sid)
+                it.setData(QtCore.Qt.UserRole + 1, title)
+                it.setData(QtCore.Qt.UserRole + 2, kind)
+                it.setToolTip({"wait": "Waiting for your answer - ", "spin": "Working... - "}.get(kind, "") + sid)
+                self.list.addItem(it)
+                it.setSizeHint(QtCore.QSize(10, 32))
+                self.list.setItemWidget(it, self._row(sid, kind, title, t))
+            self.list.doItemsLayout()                # so the scroll range is right before restoring
+            if not self._hold_rows(before):
+                bar.setValue(min(keep, bar.maximum()))
+        finally:
+            self.list.setUpdatesEnabled(True)
+        self._ages_at = time.time()
+
+    def _select_row(self, sel, reveal=False):
+        """Highlight the chat on screen (and make it the list's current row, so the arrow keys
+        start there). Scrolls only when the highlight MOVED to a row out of view - e.g. Ctrl+Down,
+        or a new chat's row appearing - never because the list was refreshed."""
+        target = None
+        for i in range(self.list.count()):
+            it = self.list.item(i)
+            if sel and it.data(QtCore.Qt.UserRole) == sel:
+                target = it
+                break
+        moved = sel != self._list_sel
+        if target is not None:                       # a chat with no row yet (a new chat before its
+            self._list_sel = sel                     # first message) moves when its row appears
+        clicked = getattr(self, "_click_sid", None) == sel
+        self._click_sid = None
+        auto = self.list.hasAutoScroll()
+        self.list.setAutoScroll(False)               # setCurrentItem must not scroll: Qt's autoScroll
+        try:                                         # pulled the list back to the open chat on every rebuild
+            if target is None:
+                self.list.setCurrentRow(-1)
+                self.list.clearSelection()
+                return
+            if self.list.currentItem() is not target or not target.isSelected():
+                self.list.setCurrentItem(target)
+        finally:
+            self.list.setAutoScroll(auto)
+        on_screen = self.list.viewport().rect().intersects(self.list.visualItemRect(target))
+        if (moved or reveal) and not (clicked and on_screen):   # a clicked row is under the mouse: leave it
+            self.list.scrollToItem(target, QtWidgets.QAbstractItemView.EnsureVisible)
 
     @staticmethod
     def _ago(t):
         d = max(0, time.time() - t)
-        return ("now" if d < 60 else "%dm" % (d // 60) if d < 3600 else "%dh" % (d // 3600) if d < 86400
-                else "%dd" % (d // 86400) if d < 7 * 86400 else datetime.datetime.fromtimestamp(t).strftime("%d %b"))
+        try:
+            return ("now" if d < 60 else "%dm" % (d // 60) if d < 3600 else "%dh" % (d // 3600) if d < 86400
+                    else "%dd" % (d // 86400) if d < 7 * 86400 else datetime.datetime.fromtimestamp(t).strftime("%d %b"))
+        except (OSError, OverflowError, ValueError):  # a corrupt time must never stop the list being built
+            return ""
 
-    def _row(self, mark, title, mtime, it):
-        """One chat in the sidebar: a live dot or spinner, the title, its age on the right."""
-        w = QtWidgets.QWidget(); w.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
-        w.setStyleSheet("background:transparent;")
-        l = QtWidgets.QHBoxLayout(w); l.setContentsMargins(10, 0, 10, 0); l.setSpacing(8)
-        m = QtWidgets.QLabel(mark.strip()); m.setFixedWidth(12 if mark else 0)
-        col = {"?": "#d9a548", "•": "#6aa5ff", "!": "#e5675f"}.get(mark[:1], "#ff4f9a")
-        m.setStyleSheet("color:%s;font-size:%s;font-weight:700;" % (col, "16px" if mark[:1] in "•!" else "12px"))
-        if mark[:1] == "•":
+    def _refresh_ages(self):
+        """Ages move with the clock, not with the rows: update the labels in place. A chat that is
+        still working is re-read (its messages keep arriving with no event to refresh the list), and
+        one not on disk yet reads "now"."""
+        folder = project_dir(self.cwd)
+        for sid, (lab, t) in list(self._ages.items()):
+            c = self._convo_for(sid)
+            if c is not None and c.working:
+                path = os.path.join(folder, sid + ".jsonl")
+                t = last_activity(path) if os.path.exists(path) else time.time()
+                self._ages[sid] = (lab, t)
+            try:
+                txt = self._ago(t)
+                if lab.text() != txt:
+                    lab.setText(txt)
+            except RuntimeError:                      # the row was rebuilt meanwhile
+                self._ages.pop(sid, None)
+        self._ages_at = time.time()
+
+    MARK_TEXT = {"wait": "?", "done": "•", "error": "!"}
+
+    def _row(self, sid, kind, title, t):
+        """One chat in the sidebar: a live dot or spinner, the title, its age on the right. The
+        mark column is always there, so a chat starting or finishing does not shift its title.
+        Looks come from the panel stylesheet (#rowmark / #rowtitle / #rowage): a stylesheet per
+        label made every rebuild re-parse ~20 of them per row."""
+        w = QtWidgets.QWidget(objectName="listrow"); w.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        l = QtWidgets.QHBoxLayout(w); l.setContentsMargins(8, 0, 10, 0); l.setSpacing(6)
+        m = QtWidgets.QLabel(SPIN[self._spin % len(SPIN)] if kind == "spin" else self.MARK_TEXT.get(kind, ""),
+                             objectName="rowmark")
+        m.setProperty("kind", kind or "none")
+        m.setFixedWidth(12); m.setAlignment(QtCore.Qt.AlignCenter)
+        if kind == "done":
             m.setToolTip("Finished while you were away")
-        t = QtWidgets.QLabel(); t.setStyleSheet("color:#ece9e3;font-size:13px;")
-        f = QtGui.QFont(self.font()); f.setPixelSize(13)            # the size the stylesheet draws it at
-        t.setText(QtGui.QFontMetrics(f).elidedText(title, QtCore.Qt.ElideRight, 150 if mark else 165))
-        a = QtWidgets.QLabel(self._ago(mtime)); a.setStyleSheet("color:#77756f;font-size:12px;")
-        l.addWidget(m); l.addWidget(t, 1); l.addWidget(a)
+        tl = QtWidgets.QLabel(objectName="rowtitle")
+        tl.setText(QtGui.QFontMetrics(self._row_font()).elidedText(title, QtCore.Qt.ElideRight, 150))
+        a = QtWidgets.QLabel(self._ago(t) if t is not None else "", objectName="rowage")
+        l.addWidget(m); l.addWidget(tl, 1); l.addWidget(a)
         # NOT it.setData(role, m): Houdini's PySide refuses a QWidget in a QVariant ("tried to use
         # invalid converter in 'Python to C++' conversion") - hython offscreen let it through
-        self._marks[it.data(QtCore.Qt.UserRole)] = m
+        self._marks[sid] = m
+        if t is not None:
+            self._ages[sid] = (a, t)
         return w
+
+    def _row_font(self):
+        f = getattr(self, "_rowf", None)
+        if f is None:
+            f = self._rowf = QtGui.QFont(self.font()); f.setPixelSize(13)   # what #rowtitle draws at
+        return f
 
     def _tick(self):
         """Spin the marks on working conversations, tick the Working line, flush queues."""
         self._flush_queues()
+        if time.time() - self._ages_at > 30:
+            self._refresh_ages()
         if not any(c.working for c in self.convos):
             return
         self._spin += 1

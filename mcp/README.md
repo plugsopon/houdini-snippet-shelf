@@ -282,7 +282,32 @@ A Stop ends the turn with `result/error_during_execution` (measured against CLI 
 not shown as an error. The desktop CLI moved to `claude-code/<ver>/<build hash>/claude.exe`;
 `_desktop_cli` checks both layouts (it had silently fallen back to the old npm CLI).
 
-Test: `hython tests/test_chat_panel_features.py` - 34 checks against a fake session, offscreen.
+Test: `hython tests/test_chat_panel_features.py` - checks against a fake session, offscreen.
+
+## The chat list keeps still (2026-10-11)
+
+The list sorted chats by their file's modified time, and **opening** a chat changes that time (the
+CLI touches the file ~1.5 s after it starts and appends a `cost-state` line, no timestamp, when it
+closes). So every chat you clicked jumped to the top and read "1m". Now:
+
+- **Order and age come from the last real message** (`last_activity`: newest user/assistant line,
+  read backwards, cached by mtime+size) - opening, closing and resuming never move a chat.
+- **A refresh that changes nothing touches nothing** (`refresh_sessions` compares a signature of
+  rows + marks). A real change rebuilds **without moving the list**: the rows on screen stay where
+  they were even when another chat jumps to the top, and Qt's autoScroll is off while the open chat
+  is re-highlighted (it used to pull the list back to it). A click never scrolls the row it
+  clicked; Ctrl+Tab / Alt+arrows, a new chat's first row and clearing a search do bring it into view.
+- A turn's burst of events (init, tasks, asks, result, context) is **one** refresh (`refresh_soon`).
+- Titles: the **latest** Rename wins even far down a long chat; a brand-new chat no longer vanishes
+  if the list looked at it before its first message landed.
+- **Search covers the whole chat** and only what was said (it stopped at 6 MB and matched JSON
+  keys); a new search opens at the top.
+
+Cost at 60 chats: a refresh with no change ~10 ms (was ~190 ms), a rebuild ~120 ms (was ~185 ms).
+A chat's latest Rename is found with a backward block search - plain reads, never mmap: a mapped
+file can't be truncated, and the CLI rewrites a transcript in place to drop a line.
+Test: `hython tests/test_chat_panel_features.py` - the `list:` / `search:` checks; each was proven
+able to fail by breaking its fix on a copy.
 
 ## FX AI as a pane tab (2026-10-11)
 
