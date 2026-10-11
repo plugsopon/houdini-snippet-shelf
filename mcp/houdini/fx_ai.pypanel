@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <!-- FX AI chat as a pane tab: New Pane Tab Type > FX AI.
+       Installed to $HOUDINI_USER_PREF_DIR/python_panels/ ; source in the Houdini Snippet Shelf repo. -->
+  <interface name="fx_ai_chat" label="FX AI" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_chat.svg" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[import sys
+p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+if p not in sys.path:
+    sys.path.insert(0, p)
+import brother_chat
+
+theChat = None
+
+
+def onCreateInterface():
+    global theChat
+    theChat = brother_chat.make_pane()
+    return theChat
+
+
+def onDestroyInterface():
+    global theChat
+    if theChat is not None:
+        try:
+            theChat.shutdown()
+        except RuntimeError:
+            pass
+        theChat = None
+]]></script>
+    <includeInPaneTabMenu menu_position="300" create_separator="true"/>
+    <includeInToolbarMenu menu_position="300" create_separator="false"/>
+    <help><![CDATA[FX AI - Brother chat inside a pane. Same chats as FX AI > Chat.]]></help>
+  </interface>
+</pythonPanelDocument>

@@ -283,3 +283,13 @@ not shown as an error. The desktop CLI moved to `claude-code/<ver>/<build hash>/
 `_desktop_cli` checks both layouts (it had silently fallen back to the old npm CLI).
 
 Test: `hython tests/test_chat_panel_features.py` - 34 checks against a fake session, offscreen.
+
+## FX AI as a pane tab (2026-10-11)
+
+`mcp/houdini/fx_ai.pypanel` (installed to `$HOUDINI_USER_PREF_DIR/python_panels/`) puts **FX AI** in
+**New Pane Tab Type**. It calls `brother_chat.make_pane()` - the same chat, `ChatPanel(embedded=True)`:
+no window frame / grips / close / maximise (the pane tab has its own), Esc never blanks the pane,
+the sidebar folds itself below 760px (☰ or Ctrl+B to toggle; a manual toggle wins). Closing the
+tab calls `shutdown()` so no claude process is left behind. Each pane (and the floating window)
+runs its own chats - don't open the SAME chat in two of them at once.
+Test: `hython tests/test_chat_pane_embedded.py`.

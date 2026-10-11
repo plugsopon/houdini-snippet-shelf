@@ -2109,10 +2109,22 @@ class FindBar(QtWidgets.QFrame):
         self.count.setText("%d/%d" % (self.i + 1, len(self.hits)))
 
 
+EMBED_CSS = """
+#panel { border: none; border-radius: 0; }
+#side { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+"""
+
+
 class ChatPanel(QtWidgets.QWidget):
-    def __init__(self, main):
-        super().__init__(main, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+    """The chat. Floating (FX AI > Chat: a frameless window of its own) or embedded=True, living
+    inside a Houdini pane tab (New Pane Tab Type > FX AI, see fx_ai.pypanel)."""
+    def __init__(self, main, embedded=False):
+        self.embedded = embedded
+        if embedded:
+            super().__init__(None)                 # Houdini parents it into the pane
+        else:
+            super().__init__(main, QtCore.Qt.Tool | QtCore.Qt.FramelessWindowHint)
+            self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.main = main
         self.cwd = REPO
         self.convos = []                     # every conversation opened in this Houdini
@@ -2125,12 +2137,18 @@ class ChatPanel(QtWidgets.QWidget):
         # Qt's own fallback picks a font that renders Thai about half the size)
         f = QtGui.QFont(); f.setFamilies(["Segoe UI", "Leelawadee UI", "Tahoma"]); f.setPixelSize(14)
         self.setFont(f)
-        self.setStyleSheet(CSS)
+        self.setStyleSheet(CSS + (EMBED_CSS if embedded else ""))
         self._build()
-        self.setMinimumSize(640, 420)
-        self.resize(min(1100, main.width() - 80), min(760, main.height() - 80))
-        c = main.geometry().center()
-        self.move(c - QtCore.QPoint(self.width() // 2, self.height() // 2))
+        # the bar's labelled buttons keep their width; a narrow pane squashed "Manual" to "an"
+        for b in (self.plus_btn, self.mic_btn, self.mode_btn, self.model_btn, self.effort_btn, self.send_btn, self.stop_btn):
+            b.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        if embedded:
+            self.setMinimumSize(320, 260)
+        else:
+            self.setMinimumSize(640, 420)
+            self.resize(min(1100, main.width() - 80), min(760, main.height() - 80))
+            c = main.geometry().center()
+            self.move(c - QtCore.QPoint(self.width() // 2, self.height() // 2))
         self.timer = QtCore.QTimer(self); self.timer.timeout.connect(self._tick); self.timer.start(110)
         self.new_session()
 
@@ -2146,6 +2164,8 @@ class ChatPanel(QtWidgets.QWidget):
         root = QtWidgets.QHBoxLayout(panel); root.setContentsMargins(1, 1, 1, 1); root.setSpacing(0)
 
         side = QtWidgets.QFrame(objectName="side"); side.setFixedWidth(260); root.addWidget(side)
+        self.side = side
+        self._side_auto = True                       # folds itself in a narrow pane until toggled by hand
         sl = QtWidgets.QVBoxLayout(side); sl.setContentsMargins(6, 10, 6, 0); sl.setSpacing(2)
         top = QtWidgets.QHBoxLayout(); top.setContentsMargins(8, 0, 4, 6); top.setSpacing(8); sl.addLayout(top)
         top.addWidget(QtWidgets.QLabel(">_", objectName="brandmark"))
@@ -2186,7 +2206,10 @@ class ChatPanel(QtWidgets.QWidget):
         mainw = QtWidgets.QWidget(); root.addWidget(mainw, 1)
         mcol = QtWidgets.QVBoxLayout(mainw); mcol.setContentsMargins(0, 0, 0, 0); mcol.setSpacing(0)
         tb = QtWidgets.QFrame(objectName="titlebar"); tb.setFixedHeight(44); mcol.addWidget(tb)
-        head = QtWidgets.QHBoxLayout(tb); head.setContentsMargins(14, 0, 8, 0); head.setSpacing(10)
+        head = QtWidgets.QHBoxLayout(tb); head.setContentsMargins(8, 0, 8, 0); head.setSpacing(10)
+        self.side_btn = QtWidgets.QPushButton("☰", objectName="icon"); self.side_btn.setToolTip("Show / hide chats (Ctrl+B)")
+        self.side_btn.clicked.connect(lambda: self.toggle_side(manual=True)); head.addWidget(self.side_btn)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+B"), self, activated=lambda: self.toggle_side(manual=True))
         self.head_title = QtWidgets.QLabel("New chat", objectName="title"); head.addWidget(self.head_title, 0, QtCore.Qt.AlignVCenter)
         self.head_chip = QtWidgets.QLabel("▭  %s" % os.path.basename(self.cwd.rstrip("\\/")), objectName="chip")
         self.head_chip.setToolTip(self.cwd); head.addWidget(self.head_chip, 0, QtCore.Qt.AlignVCenter)
@@ -2198,6 +2221,8 @@ class ChatPanel(QtWidgets.QWidget):
         self._normal_geo = None
         hide = QtWidgets.QPushButton("✕", objectName="icon"); hide.setToolTip("Hide (the chat keeps running)")
         hide.clicked.connect(self.hide); head.addWidget(hide)
+        if self.embedded:                            # the pane tab has its own close and maximise
+            hide.hide(); self.max_btn.hide()
 
         main = QtWidgets.QVBoxLayout(); main.setContentsMargins(0, 0, 0, 14); main.setSpacing(0)
         mcol.addLayout(main, 1)
@@ -2223,6 +2248,7 @@ class ChatPanel(QtWidgets.QWidget):
         wrapw.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
         wrap_row.addStretch(1); wrap_row.addWidget(wrapw, 100); wrap_row.addStretch(1)
         wrap = QtWidgets.QVBoxLayout(wrapw); wrap.setContentsMargins(28, 0, 28, 0); wrap.setSpacing(0)
+        self.wrap = wrap
         wrap.addWidget(self.limit_bar); wrap.addSpacing(4)
         self.queue_box = QtWidgets.QFrame(); self.queue_box.setObjectName("queueBox")
         self.queue_box.setStyleSheet("QFrame#queueBox{background:#1f1e1d;border:1px solid #2f2e2b;border-radius:12px;}")
@@ -2287,7 +2313,7 @@ class ChatPanel(QtWidgets.QWidget):
         self.ring = ContextRing(); bar.addSpacing(4); bar.addWidget(self.ring); bar.addSpacing(6)
         bar.addWidget(self.send_btn); bar.addWidget(self.stop_btn)
         # resize from any edge or corner, like a normal window (see EdgeGrip) - no corner grip
-        self.grips = [EdgeGrip(self, e) for e in EdgeGrip.EDGES]
+        self.grips = [] if self.embedded else [EdgeGrip(self, e) for e in EdgeGrip.EDGES]
         self.cost = QtWidgets.QLabel()            # replaced by the ring; kept so nothing old breaks
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+U"), self, activated=self.attach_files)
 
@@ -2297,10 +2323,20 @@ class ChatPanel(QtWidgets.QWidget):
         self.slash.itemClicked.connect(self._slash_pick)
         self._drag = None
 
+    def toggle_side(self, manual=False, show=None):
+        if manual:
+            self._side_auto = False
+        self.side.setVisible(not self.side.isVisible() if show is None else show)
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
         for g in getattr(self, "grips", []):
             g.place()
+        if getattr(self, "_side_auto", False) and hasattr(self, "side"):
+            self.side.setVisible(self.width() >= 760)    # a narrow pane: the chat gets the room
+        if hasattr(self, "wrap"):
+            m = 28 if self.width() >= 700 else 10
+            self.wrap.setContentsMargins(m, 0, m, 0)
         if getattr(self, "findbar", None) is not None:
             self.findbar.place()
 
@@ -2472,12 +2508,12 @@ class ChatPanel(QtWidgets.QWidget):
             g.setVisible(self._normal_geo is None)       # nothing to drag while filling the screen
 
     def mouseDoubleClickEvent(self, e):
-        if e.position().y() < 48:
+        if e.position().y() < 48 and not self.embedded:
             self.toggle_max()
 
     # frameless: drag by the header (the OS moves it - snaps and all - when it can)
     def mousePressEvent(self, e):
-        if e.position().y() < 48 and e.button() == QtCore.Qt.LeftButton:
+        if e.position().y() < 48 and e.button() == QtCore.Qt.LeftButton and not self.embedded:
             h = self.windowHandle()
             if h is not None and h.startSystemMove():
                 return
@@ -2964,6 +3000,16 @@ class ChatPanel(QtWidgets.QWidget):
     def add_note(self, text, color="#77756f"):
         return self.cur.add_note(text, color)
 
+    def shutdown(self):
+        """The pane tab closed: let every claude process end on its own (no orphans)."""
+        self.timer.stop()
+        for c in self.convos:
+            if c.session is not None:
+                try:
+                    c.session.stop()
+                except RuntimeError:
+                    pass
+
     # ---------------------------------------------------------------- attachments
     def refresh_chips(self):
         """Attached images as thumbnails inside the composer box."""
@@ -3053,7 +3099,10 @@ class ChatPanel(QtWidgets.QWidget):
 
     def keyPressEvent(self, e):
         if e.key() == QtCore.Qt.Key_Escape:
-            self.interrupt() if (self.cur and self.cur.busy) else self.hide()
+            if self.cur and self.cur.busy:
+                self.interrupt()
+            elif not self.embedded:                  # Esc must not blank a pane tab
+                self.hide()
         else:
             super().keyPressEvent(e)
 
@@ -3070,6 +3119,18 @@ def _ensure_link():
             brother_link.start(quiet=True)
     except Exception:
         pass
+
+
+_panes = []
+
+
+def make_pane():
+    """A chat for a Houdini pane tab (fx_ai.pypanel). Each pane is its own chat window."""
+    _ensure_link()
+    w = ChatPanel(hou.qt.mainWindow(), embedded=True)
+    _panes.append(w)
+    w.destroyed.connect(lambda *_: _panes.remove(w) if w in _panes else None)
+    return w
 
 
 def show_chat():
