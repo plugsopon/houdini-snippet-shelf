@@ -1019,6 +1019,7 @@ class Convo(QtCore.QObject):
         self.api_source = None            # "none" = signed in with the subscription, not an API key
         self.announced = None
         self.follow = True
+        self.fast = False                 # Fast mode (Opus): apply_flag_settings {"fastMode": ...}
         self.queue = []                   # (text, images) sent while a turn was running
         self.unread = None                # None | "done" | "error" - finished while not looked at
         self.turn_t0 = None               # when the running turn started (the "Working Ns" line)
@@ -1130,6 +1131,8 @@ class Convo(QtCore.QObject):
             self.session.start()
             if not self.fork:
                 self.sid = self.session.session_id
+            if self.fast:                                # a restarted process forgets it
+                self.control(("fast", True), "apply_flag_settings", settings={"fastMode": True})
             # a fork gets its new id from system/init; after that it is a normal session
         except RuntimeError as e:
             self.add_note(str(e), "#e5675f")
@@ -1174,6 +1177,12 @@ class Convo(QtCore.QObject):
         self.effort = effort
         if self.session is not None and self.session.running() and not self.session.parked:
             self.control(("effort", effort), "apply_flag_settings", settings={"effortLevel": effort})
+
+    def set_fast(self, on):
+        """Measured 2026-10-11 on CLI 2.1.288: apply_flag_settings {fastMode} -> get_settings echoes it."""
+        self.fast = bool(on)
+        if self.session is not None and self.session.running() and not self.session.parked:
+            self.control(("fast", self.fast), "apply_flag_settings", settings={"fastMode": self.fast})
 
     def rename(self, title):
         self.title = title
@@ -1566,6 +1575,24 @@ def _safe_paint(widget, fn):
         p.end()
 
 
+class Switch(QtWidgets.QWidget):
+    """A small on/off switch drawn like the Claude app's (display only; the row is the button)."""
+    def __init__(self, on, parent=None):
+        super().__init__(parent)
+        self.on = on
+        self.setFixedSize(30, 16)
+
+    def paintEvent(self, _):
+        _safe_paint(self, self._paint)
+
+    def _paint(self, p):
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(QtGui.QColor("#ff4f9a" if self.on else "#4a4944"))
+        p.drawRoundedRect(QtCore.QRectF(0, 0, 30, 16), 8, 8)
+        p.setBrush(QtGui.QColor("#ece9e3"))
+        p.drawEllipse(QtCore.QRectF(16 if self.on else 2, 2, 12, 12))
+
+
 class _Row(QtWidgets.QWidget):
     def __init__(self, r, menu):
         super().__init__()
@@ -1577,12 +1604,17 @@ class _Row(QtWidgets.QWidget):
             ic = QtWidgets.QLabel(r["icon"]); ic.setFixedWidth(16); ic.setObjectName("desc"); lay.addWidget(ic)
         col = QtWidgets.QVBoxLayout(); col.setSpacing(1); lay.addLayout(col, 1)
         top = QtWidgets.QHBoxLayout(); top.setSpacing(6); col.addLayout(top)
+        if r.get("header"):                          # "Fast mode" - a grey section title
+            top.addWidget(QtWidgets.QLabel(r["label"], objectName="hdr")); self.setCursor(QtCore.Qt.ArrowCursor)
+            lay.setContentsMargins(10, 4, 10, 0); return
         top.addWidget(QtWidgets.QLabel(r["label"]))
         if r.get("badge"):
             top.addWidget(QtWidgets.QLabel(r["badge"], objectName="badge"))
         top.addStretch(1)
         if r.get("desc"):
             col.addWidget(QtWidgets.QLabel(r["desc"], objectName="desc"))
+        if "toggle" in r:
+            lay.addWidget(Switch(r["toggle"]))
         if r.get("checked"):
             lay.addWidget(QtWidgets.QLabel("✓", objectName="check"))
         if r.get("key"):
@@ -1601,6 +1633,8 @@ class _Row(QtWidgets.QWidget):
         super().enterEvent(e)
 
     def mouseReleaseEvent(self, e):
+        if self.r.get("header"):
+            return
         self.menu.trigger(self.r, self)
 
 
@@ -2587,8 +2621,16 @@ class ChatPanel(QtWidgets.QWidget):
         """'Opus 5.5' - the versioned name, as the Claude app shows it."""
         m = self.models.get(value)
         if m:
+            # CLI >= 2.1.28x: displayName IS the versioned name ("Opus 5.5") and the description is
+            # only the tagline. Older CLIs had displayName "Opus" and "Opus 4.x · tagline" - reading
+            # the description first turned every row into "Best for everyday, complex tasks".
+            dn = (m.get("displayName") or "").strip()
+            if dn and any(ch.isdigit() for ch in dn) and "(" not in dn:
+                return dn
             head = (m.get("description") or "").split(" · ")[0].strip()
-            return head or m.get("displayName") or (value or "Default")
+            if head and any(ch.isdigit() for ch in head):
+                return head                                # "Opus 5.5" from the Default row
+            return dn or (value or "Default")
         return {None: "Default"}.get(value, value or "Default")
 
     def _levels(self):
@@ -2634,7 +2676,7 @@ class ChatPanel(QtWidgets.QWidget):
             ((self.models.get(v) or {}).get("displayName") or "").split(" ")[0].lower()))
         rows = []
         for n, v in enumerate(main, 1):
-            rows.append({"label": self._model_name(v), "checked": cur == v, "key": str(n),
+            rows.append({"label": self._model_name(v), "checked": cur == v, "key": "" if cur == v else str(n),
                          "tip": (self.models.get(v) or {}).get("description", ""),
                          "do": (lambda v=v: self._pick_model(v))})
 
@@ -2648,7 +2690,17 @@ class ChatPanel(QtWidgets.QWidget):
             return out
         if more:
             rows += ["-", {"label": "More models", "sub": more_rows, "sub_width": 280}]
-        PopupMenu(rows, width=220, parent=self).show_at(self.model_btn, align="right")
+        m = self.models.get(cur) or {}
+        if m.get("supportsFastMode"):
+            on = self.cur.fast
+            rows += ["-", {"label": "Fast mode", "header": True},
+                     {"label": "Enable fast mode", "toggle": on, "tip": "Faster output on this model - uses more of your plan",
+                      "do": (lambda: self._pick_fast(not self.cur.fast))}]
+        PopupMenu(rows, width=230, parent=self).show_at(self.model_btn, align="right")
+
+    def _pick_fast(self, on):
+        self.cur.set_fast(on)
+        self.convo_changed(self.cur)
 
     def _pick_model(self, v):
         self.default_model = v
@@ -2831,7 +2883,7 @@ class ChatPanel(QtWidgets.QWidget):
         self.head_title.setText(c.title)
         # the bar always shows the on-screen conversation's REAL mode, model and effort
         self.mode_btn.setText(dict((v, l) for v, l, _d, _b in MODE_ROWS).get(c.mode, c.mode))
-        self.model_btn.setText(self._model_name(c.model))
+        self.model_btn.setText(self._model_name(c.model) + ("  ·  Fast" if c.fast else ""))
         levels = self._levels()
         self.effort_btn.setVisible(bool(levels))
         self.effort_btn.setText((c.effort or "default").capitalize())
