@@ -1020,6 +1020,8 @@ class Convo(QtCore.QObject):
         self.announced = None
         self.follow = True
         self.fast = False                 # Fast mode (Opus): apply_flag_settings {"fastMode": ...}
+        self.applied_effort = None        # what the CLI really runs at (get_settings -> applied.effort)
+        self.recommended_effort = None    # the level it applies when nothing was picked
         self.queue = []                   # (text, images) sent while a turn was running
         self.unread = None                # None | "done" | "error" - finished while not looked at
         self.turn_t0 = None               # when the running turn started (the "Working Ns" line)
@@ -1131,6 +1133,7 @@ class Convo(QtCore.QObject):
             self.session.start()
             if not self.fork:
                 self.sid = self.session.session_id
+            self.control(("settings",), "get_settings")   # -> applied.effort for the effort button
             if self.fast:                                # a restarted process forgets it
                 self.control(("fast", True), "apply_flag_settings", settings={"fastMode": True})
             # a fork gets its new id from system/init; after that it is a normal session
@@ -1390,6 +1393,15 @@ class Convo(QtCore.QObject):
             self.panel.convo_changed(self)             # the menus fall back to the real state
             return
         body = r.get("response") or {}
+        if what[0] == "settings":
+            eff = (body.get("applied") or {}).get("effort")
+            self.applied_effort = eff
+            if self.effort is None:                    # nothing picked: this is the model's default
+                self.recommended_effort = eff
+            self.panel.convo_changed(self)
+            return
+        if what[0] in ("model", "effort"):             # the level in force may have moved with it
+            self.control(("settings",), "get_settings")
         if what[0] == "rewind?":
             b = getattr(self, "pending_rewind", None)
             files = body.get("filesChanged") or []
@@ -1717,9 +1729,9 @@ class DotSlider(QtWidgets.QWidget):
     """Faster <-> Smarter: a dotted track with a white thumb, one stop per effort level."""
     changed = QtCore.Signal(int)
 
-    def __init__(self, n, value, parent=None):
+    def __init__(self, n, value, parent=None, recommended=-1):
         super().__init__(parent)
-        self.n, self.value = max(2, n), value
+        self.n, self.value, self.recommended = max(2, n), value, recommended
         self.setFixedHeight(26); self.setMinimumWidth(190)
         self.setCursor(QtCore.Qt.PointingHandCursor)
 
@@ -1732,17 +1744,14 @@ class DotSlider(QtWidgets.QWidget):
 
     def _paint(self, p):
         h = self.height()
-        track = QtCore.QRectF(2, h / 2 - 7, self.width() - 4, 14)
-        p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor("#2f2e2b")); p.drawRoundedRect(track, 7, 7)
-        if self.value >= 0:
-            fill = QtCore.QRectF(2, h / 2 - 7, self._x(self.value) + 8, 14)
-            p.setBrush(QtGui.QColor("#4a4944")); p.drawRoundedRect(fill, 7, 7)
-        p.setBrush(QtGui.QColor("#77756f"))
+        track = QtCore.QRectF(2, h / 2 - 8, self.width() - 4, 16)
+        p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QColor("#3a3935")); p.drawRoundedRect(track, 8, 8)
+        p.setBrush(QtGui.QColor("#8a8780"))
         for i in range(self.n):
-            p.drawEllipse(QtCore.QPointF(self._x(i), h / 2), 1.6, 1.6)
+            p.drawEllipse(QtCore.QPointF(self._x(i), h / 2), 1.8, 1.8)
         if self.value >= 0:
             p.setBrush(QtGui.QColor("#ece9e3"))
-            p.drawRoundedRect(QtCore.QRectF(self._x(self.value) - 6, h / 2 - 9, 12, 18), 4, 4)
+            p.drawRoundedRect(QtCore.QRectF(self._x(self.value) - 8, h / 2 - 10, 16, 20), 5, 5)
 
     def _set_from(self, x):
         best = min(range(self.n), key=lambda i: abs(self._x(i) - x))
@@ -1758,7 +1767,9 @@ class DotSlider(QtWidgets.QWidget):
 
 
 class EffortPopup(QtWidgets.QFrame):
-    def __init__(self, levels, current, on_pick, parent=None):
+    """Claude-app effort picker: 'Effort  Medium', Faster..Smarter, and Recommended under the
+    level the CLI applies when you haven't picked one."""
+    def __init__(self, levels, current, on_pick, parent=None, recommended=None):
         super().__init__(parent, QtCore.Qt.Popup | QtCore.Qt.FramelessWindowHint)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
         self.setAttribute(QtCore.Qt.WA_DeleteOnClose, True)
@@ -1769,23 +1780,38 @@ class EffortPopup(QtWidgets.QFrame):
         lay = QtWidgets.QVBoxLayout(box); lay.setContentsMargins(14, 12, 14, 14); lay.setSpacing(10)
         top = QtWidgets.QHBoxLayout(); lay.addLayout(top)
         top.addWidget(QtWidgets.QLabel("Effort", objectName="hdr"))
-        self.name = QtWidgets.QLabel(); top.addWidget(self.name); top.addStretch(1)
+        self.name = QtWidgets.QLabel(); self.name.setStyleSheet("font-weight:600;")
+        top.addWidget(self.name); top.addStretch(1)
         q = QtWidgets.QLabel("ⓘ", objectName="hdr")
-        q.setToolTip("How long the model thinks before it answers.\nLower is faster; higher is smarter "
-                     "on hard problems and uses more of your plan.")
+        q.setToolTip("Higher effort means more thorough responses, but takes longer\n"
+                     "and uses your limits faster.")         # the Claude app's own wording
         top.addWidget(q)
         ends = QtWidgets.QHBoxLayout(); lay.addLayout(ends)
         ends.addWidget(QtWidgets.QLabel("Faster", objectName="desc")); ends.addStretch(1)
         ends.addWidget(QtWidgets.QLabel("Smarter", objectName="desc"))
-        idx = levels.index(current) if current in levels else -1
-        self.slider = DotSlider(len(levels), idx)
+        rec = levels.index(recommended) if recommended in levels else -1
+        idx = levels.index(current) if current in levels else rec     # nothing picked: show what's in force
+        self.slider = DotSlider(len(levels), idx, recommended=rec)
         self.slider.changed.connect(self._moved)
         lay.addWidget(self.slider)
+        # "Recommended" sits under its own stop, like the Claude app
+        self.rec = QtWidgets.QLabel("Recommended" if rec >= 0 else "", self)
+        self.rec.setStyleSheet("color:#ece9e3;font-size:12px;background:transparent;")
+        lay.addSpacing(16 if rec >= 0 else 0)
         self._label(idx)
         self.setFixedWidth(260)
 
     def _label(self, i):
-        self.name.setText(self.levels[i].capitalize() if i >= 0 else "Default")
+        self.name.setText({"xhigh": "Extra"}.get(self.levels[i], self.levels[i].capitalize()) if i >= 0 else "Default")
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if self.slider.recommended >= 0:
+            self.rec.adjustSize()
+            x = self.slider.mapTo(self, QtCore.QPoint(int(self.slider._x(self.slider.recommended)), 0)).x()
+            y = self.slider.mapTo(self, QtCore.QPoint(0, self.slider.height())).y() + 2
+            self.rec.move(max(14, min(self.width() - self.rec.width() - 14, x - self.rec.width() // 2)), y)
+            self.rec.raise_()
 
     def _moved(self, i):
         self._label(i)
@@ -2713,7 +2739,8 @@ class ChatPanel(QtWidgets.QWidget):
     def _effort_menu(self):
         if self.cur is None or not self._levels():
             return
-        EffortPopup(self._levels(), self.cur.effort, self._pick_effort, parent=self).show_at(self.effort_btn, align="right")
+        EffortPopup(self._levels(), self.cur.effort, self._pick_effort, parent=self,
+                    recommended=self.cur.recommended_effort).show_at(self.effort_btn, align="right")
 
     def _pick_effort(self, e):
         self.cur.set_effort(e)
@@ -2886,7 +2913,8 @@ class ChatPanel(QtWidgets.QWidget):
         self.model_btn.setText(self._model_name(c.model) + ("  ·  Fast" if c.fast else ""))
         levels = self._levels()
         self.effort_btn.setVisible(bool(levels))
-        self.effort_btn.setText((c.effort or "default").capitalize())
+        lvl = c.effort or c.applied_effort
+        self.effort_btn.setText({"xhigh": "Extra"}.get(lvl, (lvl or "default").capitalize()))
         self.stop_btn.setVisible(c.busy)
         self.send_btn.setVisible(not c.busy)
         if c.context:
