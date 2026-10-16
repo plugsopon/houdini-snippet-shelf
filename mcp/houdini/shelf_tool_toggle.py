@@ -1,7 +1,9 @@
 # Shelf tool: "Brother Link" - click once to let Brother see THIS Houdini session, click again to close it.
 # New Tool on any shelf -> Script tab -> paste this -> Language: Python.
-import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+import os, sys
+p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+if not os.path.isdir(p):
+    raise RuntimeError("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
 if p not in sys.path:
     sys.path.insert(0, p)
 import brother_link

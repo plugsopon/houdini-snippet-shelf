@@ -17,8 +17,8 @@ File COP (image)  ->  FX AI Angle  ->  FX AI Generate  ->  (result shows in the 
   Several prompt Wrangles join in input order, then the node's own Prompt field.
   Writes inputs + results to `$HIP/fxai_cop/<node>/` (`in_N.png`, `v001.png`, `v002.mp4`, ...).
   Every result is kept; pick an older one in *Result*. *History* keeps model, prompt, time per run.
-- Token: `$REPLICATE_API_TOKEN`, else `~/.houdini_brother/replicate_token.txt`, else the
-  Dremzo repo's `.env.local`. Never printed.
+- Token: `$REPLICATE_API_TOKEN`, else `~/.houdini_brother/replicate_token.txt`, else a .env file
+  named by `$FXAI_ENV_FILE` (a `REPLICATE_API_TOKEN=` line). Never printed.
 
 ## Measured (hython 21.0.671 Apprentice)
 - Seedream 5 Pro, 2K, orbit 45 / elevation 15 on the Oatside bottle: 124 s, result 1504x2672,

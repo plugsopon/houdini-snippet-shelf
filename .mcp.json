@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "houdini-live": {
-      "command": "C:\\Users\\Plug\\AppData\\Local\\Programs\\Python\\Python313\\python.exe",
-      "args": ["P:\\Project\\Houdini Snippet Shelf\\mcp\\server.py"]
+      "command": "${FXAI_PYTHON:-python}",
+      "args": ["${FXAI_HOME:-.}/mcp/server.py"]
     }
   }
 }

@@ -2,7 +2,7 @@
 
 Start it from inside Houdini (Python Shell or a shelf tool):
 
-    import sys; sys.path.insert(0, r"P:\\Project\\Houdini Snippet Shelf\\mcp\\houdini")
+    import os, sys; sys.path.insert(0, os.path.join(hou.getenv("FXAI_HOME"), "mcp", "houdini"))
     import brother_link; brother_link.start()
 
 Stop it with brother_link.stop(). Quitting Houdini stops it as well.

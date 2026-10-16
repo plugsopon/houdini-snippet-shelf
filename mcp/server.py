@@ -6,6 +6,8 @@ selected with houdini_use_session. With only one session open it is used automat
 """
 import glob, json, os, socket, sys, time
 
+HOUDINI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "houdini")   # brother_link lives here
+
 from mcp.server.fastmcp import FastMCP, Image
 
 REG_DIR = os.path.join(os.path.expanduser("~"), ".houdini_brother", "sessions")
@@ -77,8 +79,8 @@ def _current():
     ss = _sessions()
     if not ss:
         raise RuntimeError("No Houdini session is connected. In Houdini's Python Shell run:\n"
-                           "  import sys; sys.path.insert(0, r\"P:\\Project\\Houdini Snippet Shelf\\mcp\\houdini\")\n"
-                           "  import brother_link; brother_link.start()")
+                           "  import sys; sys.path.insert(0, r\"%s\")\n"
+                           "  import brother_link; brother_link.start()" % HOUDINI_DIR)
     if _selected["pid"] is not None:
         for reg, _ in ss:
             if reg["pid"] == _selected["pid"]:

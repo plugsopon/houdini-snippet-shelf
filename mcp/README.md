@@ -9,12 +9,26 @@ Houdini (each session you want Brother to see)          Claude Code
   registers ~/.houdini_brother/sessions/<pid>.json ◄── reads the list
 ```
 
+## Install (once, from wherever you cloned the repo)
+
+```
+hython mcp/houdini/install.py
+```
+
+or in Houdini's Python Shell: `exec(open(r"<repo>/mcp/houdini/install.py").read())`. Then restart
+Houdini. It writes a Houdini package (`$HOUDINI_USER_PREF_DIR/packages/fx_ai.json`) that sets
+**`FXAI_HOME`** = the repo and **`FXAI_PYTHON`** = a Python that has `mcp` (`pip install mcp`), and
+copies the FX AI menu, pane tab, shelf and `pythonrc.py` into your pref folder. None of those
+copies holds a path - they all find the code through `$FXAI_HOME` - so moving the repo only means
+running `install.py` again. It refuses to replace a menu / pythonrc that isn't FX AI's.
+
 ## Turn it on in Houdini
 
-Per session, in the Python Shell (or make the shelf button in `houdini/shelf_tool_toggle.py`):
+`pythonrc.py` starts it every time Houdini opens. By hand, per session (or the shelf button in
+`houdini/shelf_tool_toggle.py`):
 
 ```python
-import sys; sys.path.insert(0, r"P:\Project\Houdini Snippet Shelf\mcp\houdini")
+import os, sys; sys.path.insert(0, os.path.join(hou.getenv("FXAI_HOME"), "mcp", "houdini"))
 import brother_link; brother_link.start()
 ```
 
@@ -23,9 +37,10 @@ Nothing is running unless you start it.
 
 ## Claude Code side
 
-`.mcp.json` at the repo root registers the server, so open Claude Code **in
-`P:\Project\Houdini Snippet Shelf`** and approve `houdini-live` the first time. Needs
-`pip install mcp` (already installed for Python 3.13).
+`.mcp.json` at the repo root registers the server, so open Claude Code **in the repo folder** and
+approve `houdini-live` the first time. It runs `${FXAI_PYTHON:-python}`: set `FXAI_PYTHON` in your
+user environment if the `python` on your PATH doesn't have `mcp`. The FX AI chat inside Houdini
+doesn't need that - it writes a resolved copy of the config (`~/.houdini_brother/mcp_config.json`).
 
 ## Tools
 
@@ -100,7 +115,7 @@ Nothing is running unless you start it.
 ### AI menu + AI Settings (2026-09-28)
 
 - `mcp/houdini/MainMenuCommon.xml` adds an **AI** menu after Help: *AI Settings...*, Connect /
-  Disconnect Brother, Hide Brother's cursor. `install_menu.py` copies it into the Houdini pref
+  Disconnect Brother, Hide Brother's cursor. `install.py` copies it into the Houdini pref
   folder (refuses to overwrite a different file). **Houdini reads menu files at start-up** -
   `hou.ui.updateMainMenuBar()` did not pick up a new top-level menu; restart once.
 - *AI Settings...* (`brother_ui.py`) is a frameless dark panel over the main window: 7 cursor

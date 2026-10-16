@@ -48,8 +48,16 @@ The builders never save your scene; undo with Ctrl+Z.
 
 ![FX AI chat panel](mcp/docs/fx_ai_features.png)
 
-Setup, the tool list and the design notes are in [`mcp/README.md`](mcp/README.md). You need your
-own Claude Code login; nothing in this repo contains credentials.
+To install, clone the repo anywhere and run once, then restart Houdini:
+
+```
+hython mcp/houdini/install.py
+```
+
+It points Houdini at the clone through a `FXAI_HOME` package variable, so nothing in the repo is
+tied to one machine's paths. The `houdini-live` server needs a Python with `pip install mcp`.
+Setup details, the tool list and the design notes are in [`mcp/README.md`](mcp/README.md). You need
+your own Claude Code login; nothing in this repo contains credentials.
 
 ## R&D: AI generation in Copernicus
 
@@ -60,7 +68,8 @@ own Claude Code login; nothing in this repo contains credentials.
   Seedance 2.5 for video) and shows the result in the viewer.
 
 Any Wrangle wired into an input becomes the prompt. This is an experiment. It needs your own
-Replicate token in `$REPLICATE_API_TOKEN`, and every generation costs money.
+Replicate token (`$REPLICATE_API_TOKEN`, or `~/.houdini_brother/replicate_token.txt`), and every
+generation costs money. Build the HDAs with `hython rnd/cop_ai/build_fxai_cop.py --otl-only`.
 
 ## Tests
 
@@ -91,7 +100,7 @@ Houdini's backups are not in git.
 
 ## Notes
 
-- Everything here is tested on Windows. Paths in a few scripts point at the author's machine;
-  change them to yours.
+- Everything here is tested on Windows. The scripts find the repo from where they are, or
+  through `$FXAI_HOME`; only the `.hipnc` scenes still hold paths from the author's machine.
 - The shelf is also published as a single HTML page; `page/houdini-snippet-shelf.html` is the
   last published build.

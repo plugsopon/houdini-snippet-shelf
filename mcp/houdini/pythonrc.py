@@ -1,16 +1,19 @@
 """FX AI - start brother_link whenever Houdini opens, so there is nothing to "connect".
 
-Install: copy to $HOUDINI_USER_PREF_DIR/python3.11libs/pythonrc.py (Houdini runs every
+Installed by install.py to $HOUDINI_USER_PREF_DIR/python3.11libs/pythonrc.py (Houdini runs every
 pythonrc.py on its path at startup, alongside its own - unlike 123.py, this replaces nothing).
 Silent (no Houdini Console pop-up). Localhost only, token-protected - see brother_link.py.
 """
 try:
     import hou
     if hou.isUIAvailable():
-        import hdefereval, sys
+        import hdefereval, os, sys
 
         def _fx_ai_link():
-            p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+            p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+            if not os.path.isdir(p):
+                print("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
+                return
             if p not in sys.path:
                 sys.path.insert(0, p)
             try:

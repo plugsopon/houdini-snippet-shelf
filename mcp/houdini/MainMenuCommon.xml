@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Brother's "FX AI" menu on Houdini's main menu bar (after Help).
-     install_menu.py copies this file into $HOUDINI_USER_PREF_DIR; Houdini merges it with its
+     install.py copies this file into $HOUDINI_USER_PREF_DIR; Houdini merges it with its
      own MainMenuCommon.xml. -->
 <mainMenu>
   <menuBar>
@@ -11,8 +11,10 @@
       <scriptItem id="brother_ai_chat">
         <label>Chat...</label>
         <scriptCode><![CDATA[
-import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+import os, sys
+p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+if not os.path.isdir(p):
+    raise RuntimeError("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
 if p not in sys.path:
     sys.path.insert(0, p)
 import brother_chat
@@ -23,8 +25,10 @@ brother_chat.show_chat()
       <scriptItem id="brother_ai_settings">
         <label>FX AI Settings...</label>
         <scriptCode><![CDATA[
-import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+import os, sys
+p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+if not os.path.isdir(p):
+    raise RuntimeError("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
 if p not in sys.path:
     sys.path.insert(0, p)
 import brother_ui

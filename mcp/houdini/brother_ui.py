@@ -4,7 +4,7 @@ starts/stops the brother_link connection. Every change applies to the live curso
 is saved to ~/.houdini_brother/cursor.json (brother_cursor.save_settings).
 
 Opened from Houdini's main menu bar: AI > AI Settings...  (MainMenuCommon.xml in this folder,
-installed by install_menu.py).
+installed by install.py).
 """
 import random, sys, time
 

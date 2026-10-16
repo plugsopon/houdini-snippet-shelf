@@ -1,6 +1,7 @@
 """Build the FX AI Copernicus HDAs + a demo scene (run with hython, NOT in Plug's live Houdini).
 
   hython build_fxai_cop.py [--live]     --live also presses Generate once (costs one Seedream call)
+  hython build_fxai_cop.py --otl-only   rebuild the HDAs only (also copied to <repo>/rnd/cop_ai/otls), no scene
 
 Writes:
   ~/Documents/houdini21.0/otls/cop_fxai.hdanc   - FX AI Angle + FX AI Generate (loads on next Houdini start)
@@ -15,9 +16,9 @@ import hou
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-OTL = os.path.join(os.path.expanduser("~"), "Documents", "houdini21.0", "otls", "cop_fxai.hdanc").replace("\\", "/")
+OTL = os.path.join(hou.homeHoudiniDirectory(), "otls", "cop_fxai.hdanc").replace("\\", "/")
 HIPDIR = os.path.join(REPO, "hip", "cop_ai").replace("\\", "/")
-SAMPLE_SRC = r"P:\Project\Dremzo\temp\seedream5-rnd\input_product.jpg"
+SAMPLE_SRC = os.environ.get("FXAI_SAMPLE_IMAGE", "")   # only needed if hip/cop_ai/sample_product.jpg is missing
 MODULE = open(os.path.join(HERE, "fxai_cop_module.py"), encoding="utf8").read()
 
 F, S, I, M, B, L, T = (hou.FloatParmTemplate, hou.StringParmTemplate, hou.IntParmTemplate,
@@ -148,17 +149,26 @@ def main():
     os.makedirs(HIPDIR, exist_ok=True)
     hou.hipFile.clear(suppress_save_prompt=True)
     hip = HIPDIR + "/fxai_cop_demo_v2.hipnc"
-    if os.path.exists(hip) and "--force" not in sys.argv:
+    otl_only = "--otl-only" in sys.argv
+    if os.path.exists(hip) and "--force" not in sys.argv and not otl_only:
         raise SystemExit("%s exists - not overwriting (pass --force for a scratch copy you own)" % hip)
-    hou.hipFile.setName(hip)
+    if not otl_only:
+        hou.hipFile.setName(hip)
 
     net = hou.node("/obj").createNode("copnet", "fxai_cop")
     angle = build_angle(net); angle.destroy()
     gen = build_generate(net); gen.destroy()
     hou.hda.installFile(OTL)
+    if otl_only:
+        repo_otl = os.path.join(HERE, "otls", "cop_fxai.hdanc")
+        shutil.copyfile(OTL, repo_otl)
+        print("hda:", OTL, "->", repo_otl)
+        return
 
     sample = HIPDIR + "/sample_product.jpg"
     if not os.path.exists(sample):
+        if not os.path.isfile(SAMPLE_SRC):
+            raise SystemExit("no %s - set FXAI_SAMPLE_IMAGE to an image to use" % sample)
         shutil.copyfile(SAMPLE_SRC, sample)
     f = net.createNode("file", "load_image")
     f.parm("filename").set("$HIP/sample_product.jpg")

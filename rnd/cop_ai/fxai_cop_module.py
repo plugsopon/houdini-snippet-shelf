@@ -26,7 +26,7 @@ MODELS = {
     "seedance25": {"slug": "bytedance/seedance-2.5", "kind": "video", "ext": ".mp4"},
 }
 API = "https://api.replicate.com/v1"
-DREMZO_ENV = r"P:\Project\Dremzo\dremzo-web\.env.local"
+ENV_FILE = os.environ.get("FXAI_ENV_FILE", "")   # optional: a .env file holding REPLICATE_API_TOKEN=
 _running = {}           # node session id -> True while a job is in flight
 
 
@@ -40,8 +40,8 @@ def _token():
         t = open(p, encoding="utf8").read().strip()
         if t:
             return t
-    if os.path.isfile(DREMZO_ENV):
-        for line in open(DREMZO_ENV, encoding="utf8"):
+    if ENV_FILE and os.path.isfile(ENV_FILE):
+        for line in open(ENV_FILE, encoding="utf8"):
             if line.startswith("REPLICATE_API_TOKEN="):
                 return line.split("=", 1)[1].strip().strip('"')
     raise hou.Error("No Replicate token: set REPLICATE_API_TOKEN or write it to "

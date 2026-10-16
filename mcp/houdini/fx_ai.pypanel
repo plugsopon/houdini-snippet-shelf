@@ -2,9 +2,11 @@
 <pythonPanelDocument>
   <!-- FX AI chat as a pane tab: New Pane Tab Type > FX AI.
        Installed to $HOUDINI_USER_PREF_DIR/python_panels/ ; source in the Houdini Snippet Shelf repo. -->
-  <interface name="fx_ai_chat" label="FX AI" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_chat.svg" showNetworkNavigationBar="false" help_url="">
-    <script><![CDATA[import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+  <interface name="fx_ai_chat" label="FX AI" icon="$FXAI_HOME/mcp/houdini/icons/fxai_chat.svg" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[import os, sys
+p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+if not os.path.isdir(p):
+    raise RuntimeError("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
 if p not in sys.path:
     sys.path.insert(0, p)
 import brother_chat

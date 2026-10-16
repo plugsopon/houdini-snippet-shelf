@@ -26,7 +26,7 @@ import base64, collections, datetime, glob, json, os, re, shutil, sys, time, uui
 import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
-REPO = r"P:\Project\Houdini Snippet Shelf"
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # <repo>/mcp/houdini/this
 MCP_CONFIG = os.path.join(REPO, ".mcp.json")
 MODELS = (("Default", None), ("Opus", "opus"), ("Sonnet", "sonnet"), ("Haiku", "haiku"))
 MODES = (("Manual", "default"), ("Accept edits", "acceptEdits"), ("Plan", "plan"),
@@ -86,6 +86,24 @@ def claude_exe():
     if os.path.exists(npm):
         return npm
     return which
+
+
+def mcp_config():
+    """The repo's .mcp.json with its ${FXAI_PYTHON:-python} / ${FXAI_HOME:-.} filled in, written to
+    ~/.houdini_brother/mcp_config.json - so the chat never depends on how the CLI expands them, or
+    on which python is first on PATH (FXAI_PYTHON comes from install.py's package). None = no file."""
+    if not os.path.exists(MCP_CONFIG):
+        return None
+    py = hou.getenv("FXAI_PYTHON") or os.environ.get("FXAI_PYTHON") or "python"
+    with open(MCP_CONFIG, encoding="utf8") as fh:
+        txt = fh.read()
+    for var, val in (("FXAI_PYTHON", py), ("FXAI_HOME", REPO)):
+        txt = re.sub(r"\$\{%s(:-[^}]*)?\}" % var, json.dumps(val.replace("\\", "/"))[1:-1], txt)
+    out = os.path.join(os.path.expanduser("~"), ".houdini_brother", "mcp_config.json")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf8") as fh:
+        fh.write(txt)
+    return out
 
 
 def claude_env():
@@ -605,8 +623,9 @@ class ClaudeSession(QtCore.QObject):
             args += ["--model", self.model]
         if self.effort:
             args += ["--effort", self.effort]
-        if os.path.exists(MCP_CONFIG):
-            args += ["--mcp-config", MCP_CONFIG,
+        cfg = mcp_config()
+        if cfg:
+            args += ["--mcp-config", cfg,
                      # looking at the scene never needs a click; changing it still asks
                      "--allowedTools", ",".join("mcp__houdini-live__houdini_" + t for t in LOOK_TOOLS)]
         hip_dir = os.path.dirname(hou.hipFile.path())

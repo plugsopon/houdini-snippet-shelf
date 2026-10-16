@@ -12,10 +12,12 @@
     <memberTool name="fxai_preview_edges"/>
   </toolshelf>
 
-  <tool name="fxai_chat" label="Chat" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_chat.svg">
+  <tool name="fxai_chat" label="Chat" icon="$FXAI_HOME/mcp/houdini/icons/fxai_chat.svg">
     <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
-    <script scriptType="python"><![CDATA[import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+    <script scriptType="python"><![CDATA[import os, sys
+p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+if not os.path.isdir(p):
+    raise RuntimeError("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
 if p not in sys.path:
     sys.path.insert(0, p)
 import brother_chat
@@ -23,10 +25,12 @@ brother_chat.show_chat()
 ]]></script>
   </tool>
 
-  <tool name="fxai_settings" label="Settings" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_settings.svg">
+  <tool name="fxai_settings" label="Settings" icon="$FXAI_HOME/mcp/houdini/icons/fxai_settings.svg">
     <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
-    <script scriptType="python"><![CDATA[import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+    <script scriptType="python"><![CDATA[import os, sys
+p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+if not os.path.isdir(p):
+    raise RuntimeError("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
 if p not in sys.path:
     sys.path.insert(0, p)
 import brother_ui
@@ -34,7 +38,7 @@ brother_ui.show_settings()
 ]]></script>
   </tool>
 
-  <tool name="fxai_hide_cursor" label="Hide Cursor" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_hide_cursor.svg">
+  <tool name="fxai_hide_cursor" label="Hide Cursor" icon="$FXAI_HOME/mcp/houdini/icons/fxai_hide_cursor.svg">
     <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
     <script scriptType="python"><![CDATA[import sys
 if "brother_cursor" in sys.modules:
@@ -42,10 +46,12 @@ if "brother_cursor" in sys.modules:
 ]]></script>
   </tool>
 
-  <tool name="fxai_preview_edges" label="Preview Edges" icon="P:/Project/Houdini Snippet Shelf/mcp/houdini/icons/fxai_edges.svg">
+  <tool name="fxai_preview_edges" label="Preview Edges" icon="$FXAI_HOME/mcp/houdini/icons/fxai_edges.svg">
     <helpText><![CDATA[FX AI (Brother) tool]]></helpText>
-    <script scriptType="python"><![CDATA[import sys
-p = r"P:\Project\Houdini Snippet Shelf\mcp\houdini"
+    <script scriptType="python"><![CDATA[import os, sys
+p = os.path.join(hou.getenv("FXAI_HOME") or "", "mcp", "houdini")
+if not os.path.isdir(p):
+    raise RuntimeError("FX AI: $FXAI_HOME is not set - run mcp/houdini/install.py once")
 if p not in sys.path:
     sys.path.insert(0, p)
 import hdefereval, threading
