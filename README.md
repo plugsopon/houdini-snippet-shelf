@@ -1,36 +1,97 @@
 # Houdini Snippet Shelf
 
-Plug's Houdini techniques: paste-able Python builders and VEX wrangles, each tested in
-Houdini 21.0.671 (Apprentice). Not yet tried in 20.5.
+A working FX TD's shelf of Houdini techniques: paste-able Python builders that create the node
+networks, and the VEX wrangles inside them. Every technique is checked headlessly in **hython
+21.0.671** before it lands here. Houdini 20.5 is not tested yet.
 
-Online (log in to claude.ai): https://claude.ai/artifact/3qTbGYMJKu4Y8174uEWovB
-The page holds EVERY version of every technique. This folder holds the latest one.
+The repo also holds **FX AI**, a Claude chat panel that lives inside Houdini, and an R&D
+experiment that generates AI images and video from a Copernicus network.
 
-## Folders
+> Technique notes are written in Thai; code, node names and comments are in English.
 
-- `techniques/` - one folder per technique, latest version only. Each has a README.md
-  (notes, where to paste each file, what it was tested with) plus the .py / .vfl files.
-  - `RBD_pieces_to_copy_root_geometry/` - copy the root pieces onto an RBD sim (packed or
-    points), fractured-box builder v005, LOP / USD PointInstancer version.
-  - `transform_to_orient_scale/` - 3@transform -> orient + scale / pscale.
-  - `Unborn_particles_to_follow_live/` - not-yet-born particles follow live neighbours.
-  - `2_vectors_to_matrix_orient/`, `Subframe_for_changing_topology/`,
-    `Surface_distance_from_an_edge_group/`, `My_First_Shot/` - from the FX Template tool.
-- `tests/` - hython scripts that re-run the checks. Run with
-  `"C:\Program Files\Side Effects Software\Houdini 21.0.671\bin\hython.exe" tests\<file>.py <args>`
-  (the arguments are listed at the top of each script: the builder file and the .hipnc to test).
-- `page/houdini-snippet-shelf.html` - the shelf page as last published (Version 18).
-- `page/build/` - what the page is built from (template, JS parts, rebuild script, FX Template export).
-- `page/history/` - earlier builds of the page.
+## Techniques
 
-## Houdini scene files - `hip/`
+Each folder in [`techniques/`](techniques/) holds the latest version, with a README that says
+where to paste each file and what it was tested with.
 
-- `hip/emittingRBD/` - the emitting-RBD work: original file, the rest-pose fix, the root
-  copy, the LOP fix, and `emittingRBD_fracture_v5.hipnc` (builder v005 on the fractured box).
-- `hip/particles/` - the unborn-particles follow-live tests.
-- `hip/underwater/` - Underwater.hipnc (April). Its cobweb / hand .abc files and the hand
-  texture were already missing before the move; they were never in TestHou.
-- Each folder keeps `backup/` (Houdini's own backups) and `geo/` (file caches, found
-  through `$HIP/geo`). Both stay on disk but are NOT in git - `geo/` is ~2.6 GB.
-- Moved here from `C:\Users\Plug\Desktop\TestHou\` on 2026-09-27. Houdini's recent-files
-  list still points at the old path; open them from here.
+| Technique | Context | What it does |
+|---|---|---|
+| [RBD pieces → copy root geometry](techniques/RBD_pieces_to_copy_root_geometry/) | SOP, LOP | Copy the original pieces back onto a simmed RBD (packed or points), including a fractured-box builder and a USD PointInstancer version |
+| [transform → orient + scale](techniques/transform_to_orient_scale/) | SOP | Turn `3@transform` (e.g. `packedfulltransform`) back into `p@orient` + `v@scale` / `f@pscale` |
+| [Unborn particles → follow live](techniques/Unborn_particles_to_follow_live/) | SOP | Particles that are not born yet follow their live neighbours |
+| [2 vectors → matrix / orient](techniques/2_vectors_to_matrix_orient/) | SOP | Build a matrix / orient from two vectors |
+| [Subframe for changing topology](techniques/Subframe_for_changing_topology/) | SOP | Subframes for motion blur when the point count changes |
+| [Surface distance from an edge group](techniques/Surface_distance_from_an_edge_group/) | SOP | Distance across the surface from an edge group |
+| [My First Shot](techniques/My_First_Shot/) | OBJ | A starter shot setup |
+
+### Using one
+
+1. Open the technique's README to see which network to paste into.
+2. Paste the `.py` builder into Houdini's **Python Shell** (or a shelf tool). It creates the
+   nodes and prints what it made; most also pick up the frame range from your playbar.
+3. The `.vfl` files are the same wrangle code on its own, for when you want to wire it by hand.
+
+The builders never save your scene; undo with Ctrl+Z.
+
+## FX AI: Claude inside Houdini
+
+[`mcp/`](mcp/) contains two pieces:
+
+- **The chat panel** (`mcp/houdini/brother_chat.py`): a PySide6 panel that runs the Claude Code
+  CLI. Open it from the FX AI menu as a floating window, or as a pane tab via
+  *New Pane Tab Type → FX AI*. It has chats you can search, pin and archive, queued messages,
+  permission prompts, model and effort pickers, drag and drop, and voice input.
+- **`houdini-live`** (`mcp/server.py` + `mcp/houdini/brother_link.py`): an MCP server that lets
+  Claude look at the open Houdini session and, only when asked, change it, with one undo step per
+  change. It listens on `127.0.0.1` only, and does nothing until you run `brother_link.start()`
+  in that session.
+
+![FX AI chat panel](mcp/docs/fx_ai_features.png)
+
+Setup, the tool list and the design notes are in [`mcp/README.md`](mcp/README.md). You need your
+own Claude Code login; nothing in this repo contains credentials.
+
+## R&D: AI generation in Copernicus
+
+[`rnd/cop_ai/`](rnd/cop_ai/) has two COP HDAs:
+
+- **FX AI Angle** sets a camera orbit, elevation and distance.
+- **FX AI Generate** sends the image and a prompt to Replicate (Seedream 5 Pro for images,
+  Seedance 2.5 for video) and shows the result in the viewer.
+
+Any Wrangle wired into an input becomes the prompt. This is an experiment. It needs your own
+Replicate token in `$REPLICATE_API_TOKEN`, and every generation costs money.
+
+## Tests
+
+[`tests/`](tests/) re-runs the checks headlessly:
+
+```
+"C:\Program Files\Side Effects Software\Houdini 21.0.671\bin\hython.exe" tests\<file>.py <args>
+```
+
+The arguments (the builder and the `.hipnc` to test against) are listed at the top of each
+script. The chat panel tests (`test_chat_panel_features.py`, `test_chat_pane_embedded.py`) need no
+arguments: they run offscreen against a fake Claude session, so they never start the CLI.
+
+## Layout
+
+```
+techniques/   latest version of each technique (README + .py builders + .vfl wrangles)
+tests/        hython checks
+hip/          the .hipnc scenes the techniques were built and tested in (Apprentice)
+mcp/          FX AI chat panel + houdini-live MCP server
+rnd/cop_ai/   Copernicus AI generation experiment
+page/         the shelf web page (single HTML file) and what builds it
+.claude/      Claude Code skills used to build, verify and publish techniques
+```
+
+The `hip/` scenes are Houdini **Apprentice** files (`.hipnc`). Their file caches (`geo/`) and
+Houdini's backups are not in git.
+
+## Notes
+
+- Everything here is tested on Windows. Paths in a few scripts point at the author's machine;
+  change them to yours.
+- The shelf is also published as a single HTML page; `page/houdini-snippet-shelf.html` is the
+  last published build.
