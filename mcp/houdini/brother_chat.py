@@ -26,6 +26,8 @@ import base64, collections, datetime, glob, json, os, re, shutil, sys, time, uui
 import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import brother_accounts as ACC
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # <repo>/mcp/houdini/this
 MCP_CONFIG = os.path.join(REPO, ".mcp.json")
 MODELS = (("Default", None), ("Opus", "opus"), ("Sonnet", "sonnet"), ("Haiku", "haiku"))
@@ -591,9 +593,10 @@ class ClaudeSession(QtCore.QObject):
     ended = QtCore.Signal(int, str)
 
     def __init__(self, cwd, resume=None, model=None, mode="default", parent=None, session_id=None,
-                 effort=None, fork=False):
+                 effort=None, fork=False, account=None):
         super().__init__(parent)
         self.cwd, self.resume, self.model, self.mode = cwd, resume, model, mode
+        self.account = account            # brother_accounts id; None / "computer" = this machine's login
         self.effort, self.fork = effort, fork
         self.init = {}                    # the initialize answer: commands, models, ...
         self.session_id = resume or session_id or str(uuid.uuid4())
@@ -642,6 +645,8 @@ class ClaudeSession(QtCore.QObject):
         # entrypoint; without this the chat can't publish the Snippet Shelf page (v006/v007 sat
         # unpublished for that reason). claude_env() strips CLAUDE_*, so set it here.
         env.insert("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+        # the chosen account's login (brother_accounts); transcripts stay in ~/.claude either way
+        ACC.apply_env(env.insert, env.remove, self.account)
         p.setProcessEnvironment(env)
         p.readyReadStandardOutput.connect(self._read)
         p.readyReadStandardError.connect(self._read_err)
@@ -1358,6 +1363,13 @@ class Convo(QtCore.QObject):
         self.working_w = None
         self.edited = {}                  # path -> {"add", "del", "html"} for the "Edited N files" card
         self.edit_ids = {}                # tool_use_id -> (path, add, del)
+        # accounts: the choice ("auto" or an id) and the account the live process really uses
+        self.account_choice = getattr(panel, "default_account", ACC.AUTO)
+        self.account = None
+        self.last_sent = None             # (text, images) of the last message: resent after a switch
+        self.tried = set()                # accounts that ran out on the message being sent
+        self.limit_hit = False            # a rate_limit_event said "rejected" during this turn
+        self.limit_resets = None
         self.scroll = QtWidgets.QScrollArea(); self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         host = QtWidgets.QWidget(objectName="feedhost")
@@ -1453,9 +1465,10 @@ class Convo(QtCore.QObject):
                     sig.disconnect(slot)
                 except (RuntimeError, TypeError):
                     pass
+        self.account = ACC.resolve(self.account_choice, exclude=self.tried) or ACC.resolve(self.account_choice)
         self.session = ClaudeSession(self.panel.cwd, self.sid if self.has_history else None, self.model,
                                      self.mode, self, session_id=None if self.fork else self.sid,
-                                     effort=self.effort, fork=self.fork)
+                                     effort=self.effort, fork=self.fork, account=self.account)
         self.session.event.connect(self.on_event)
         self.session.ended.connect(self.on_ended)
         _ensure_link()
@@ -1476,14 +1489,23 @@ class Convo(QtCore.QObject):
         if self.session is not None and not self.working:
             self.session.stop()
 
-    def send(self, text, imgs, queue_if_busy=True):
+    def send(self, text, imgs, queue_if_busy=True, retry=False):
         if queue_if_busy and (self.busy or self.waiting):
             # Dremzo Code's queue: shown above the composer, sent when the turn ends
             self.queue.append((text, list(imgs)))
             self.panel.refresh_queue()
             return
+        if not retry:                     # a new message may use every account again
+            self.tried = set()
+        self.last_sent = (text, list(imgs))
+        self.limit_hit = False
+        want = ACC.resolve(self.account_choice, exclude=self.tried) or ACC.resolve(self.account_choice)
+        if (want != self.account and self.session is not None and self.session.running()
+                and not self.session.parked):
+            self.session.stop()           # picked during a turn, or its account ran out: relaunch on it
         self.start()
-        self.add_user(text, len(imgs))
+        if not retry:
+            self.add_user(text, len(imgs))
         if self.session.send(text, imgs):
             self.has_history = True
             self.turn_t0 = time.time()
@@ -1527,6 +1549,42 @@ class Convo(QtCore.QObject):
             return
         self.pending_rewind = bubble
         self.control(("rewind?", bubble.uuid), "rewind_files", user_message_id=bubble.uuid, dry_run=True)
+
+    def set_account(self, choice):
+        """Pick the account for this chat ("auto" or an id). A live process can't change its login,
+        so an idle one is closed and the next message starts on the new account with --resume -
+        the history is the same ~/.claude transcript. During a turn it applies after the turn."""
+        self.account_choice = choice
+        self.tried = set()
+        new = ACC.resolve(choice)
+        if new == self.account:
+            return
+        if self.session is not None and self.session.running() and not self.session.parked and not self.working:
+            self.session.stop()
+            self.account = new
+
+    def switch_after_limit(self):
+        """This turn failed on a plan limit. With auto-switch on, move to the next account that
+        still has quota and send the same message again. True = it did."""
+        if self.account is None or not self.last_sent:
+            return False
+        ACC.mark_limited(self.account, self.limit_resets)
+        self.tried.add(self.account)
+        nxt = ACC.next_account(self.account, exclude=self.tried)
+        if nxt is None:
+            if ACC.auto_switch() and len(ACC.accounts()) > 1:
+                self.add_note("Every account is out of quota right now.", "#d9a548")
+            return False
+        was = ACC.label(self.account)
+        if self.account_choice not in (None, ACC.AUTO):
+            self.account_choice = nxt        # a pinned account follows the switch
+        if self.session is not None:
+            self.session.stop()
+        self.add_note("%s hit its Claude limit - switched to %s and sent the message again." % (was, ACC.label(nxt)),
+                      "#6aa5ff")
+        text, imgs = self.last_sent
+        QtCore.QTimer.singleShot(0, lambda: self.send(text, imgs, queue_if_busy=False, retry=True))
+        return True
 
     def set_model(self, model):
         self.model = model
@@ -1774,7 +1832,15 @@ class Convo(QtCore.QObject):
                 c.expire("Cancelled by Claude")
             self.panel.convo_changed(self)
         elif t == "rate_limit_event":
-            self.panel.rate_limit(o.get("rate_limit_info") or {})
+            info = o.get("rate_limit_info") or {}
+            if info.get("status") == "rejected":
+                self.limit_hit = True
+                self.limit_resets = info.get("resetsAt")
+                if self.account:
+                    ACC.mark_limited(self.account, info.get("resetsAt"))
+            elif info.get("status") == "allowed" and self.account and ACC.limited_until(self.account):
+                ACC.clear_limited(self.account)
+            self.panel.rate_limit(info, self)
         elif t == "stream_event":
             # each agent (main = None, subagents by parent_tool_use_id) streams into its OWN blocks,
             # so parallel subagents can't write into each other's text
@@ -1862,6 +1928,9 @@ class Convo(QtCore.QObject):
                 if o.get("api_error_status"):
                     why = "%s (HTTP %s)" % (why, o["api_error_status"])
                 self.add_note("error: %s" % why, "#e5675f")
+                if (self.limit_hit or ACC.LIMIT_RE.search(str(why))) and self.switch_after_limit():
+                    failed = False                           # it carries on on the next account
+                    stopped = True                           # no "Error" toast for a handled switch
             else:
                 self.add_note("done  %.1fs   %s in / %s out" % ((o.get("duration_ms") or 0) / 1000.0,
                                                                _k(tokens), _k(u.get("output_tokens", 0))))
@@ -2414,6 +2483,167 @@ class EdgeGrip(QtWidgets.QWidget):
         self._start = None
 
 
+class AccountsDialog(QtWidgets.QDialog):
+    """Manage the Claude accounts (brother_accounts): add one with a `claude setup-token` token,
+    rename, replace its token, change the priority order, remove. The order is the order Auto
+    uses them in, and the order auto-switch walks when one runs out."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("FX AI - Claude accounts")
+        self.setMinimumSize(520, 360)
+        self.setStyleSheet(
+            "QDialog{background:#262624;} QLabel{color:#ece9e3;font-size:13px;}"
+            "QLabel#dim{color:#77756f;font-size:12px;}"
+            "QListWidget{background:#1f1e1d;color:#ece9e3;border:1px solid #3a3935;border-radius:8px;font-size:13px;}"
+            "QListWidget::item{padding:7px 8px;} QListWidget::item:selected{background:#353532;color:#ece9e3;}"
+            "QPushButton{background:#2a2927;color:#ece9e3;border:1px solid #3a3935;border-radius:7px;padding:5px 12px;}"
+            "QPushButton:hover{background:#353532;} QPushButton:disabled{color:#5a5853;}"
+            "QLineEdit{background:#1f1e1d;color:#ece9e3;border:1px solid #3a3935;border-radius:7px;padding:5px 8px;}"
+            "QCheckBox{color:#ece9e3;}")
+        lay = QtWidgets.QVBoxLayout(self); lay.setSpacing(10)
+        lay.addWidget(QtWidgets.QLabel("Accounts are used top first. Auto picks the first one that still has quota."))
+        self.list = QtWidgets.QListWidget(); lay.addWidget(self.list, 1)
+        self.list.currentRowChanged.connect(self._sel)
+        row = QtWidgets.QHBoxLayout(); lay.addLayout(row)
+        self.b_add = QtWidgets.QPushButton("Add account..."); self.b_add.clicked.connect(self._add)
+        self.b_up = QtWidgets.QPushButton("↑"); self.b_up.clicked.connect(lambda: self._move(-1))
+        self.b_down = QtWidgets.QPushButton("↓"); self.b_down.clicked.connect(lambda: self._move(1))
+        self.b_ren = QtWidgets.QPushButton("Rename"); self.b_ren.clicked.connect(self._rename)
+        self.b_tok = QtWidgets.QPushButton("New token"); self.b_tok.clicked.connect(self._token)
+        self.b_del = QtWidgets.QPushButton("Remove"); self.b_del.clicked.connect(self._remove)
+        for b in (self.b_add, self.b_up, self.b_down, self.b_ren, self.b_tok, self.b_del):
+            row.addWidget(b)
+        row.insertStretch(1, 1)
+        self.auto = QtWidgets.QCheckBox("Switch to the next account when one hits its limit (and send the message again)")
+        self.auto.setChecked(ACC.auto_switch()); self.auto.toggled.connect(ACC.set_auto_switch)
+        lay.addWidget(self.auto)
+        close = QtWidgets.QPushButton("Close"); close.clicked.connect(self.accept)
+        crow = QtWidgets.QHBoxLayout(); crow.addStretch(1); crow.addWidget(close); lay.addLayout(crow)
+        self._fill()
+
+    def _fill(self, keep=None):
+        self.list.clear()
+        for a in ACC.accounts():
+            until = ACC.limited_until(a["id"])
+            note = ""
+            if a["id"] == ACC.BUILTIN:
+                note = "   -  this machine's own Claude login"
+            if until:
+                note += "   -  out of quota until %s" % datetime.datetime.fromtimestamp(until).strftime("%a %H:%M")
+            it = QtWidgets.QListWidgetItem(a["label"] + note); it.setData(QtCore.Qt.UserRole, a["id"])
+            self.list.addItem(it)
+            if a["id"] == keep:
+                self.list.setCurrentItem(it)
+        if self.list.currentRow() < 0 and self.list.count():
+            self.list.setCurrentRow(0)
+        self._sel()
+
+    def _cur(self):
+        it = self.list.currentItem()
+        return it.data(QtCore.Qt.UserRole) if it else None
+
+    def _sel(self, *_):
+        aid = self._cur()
+        added = aid not in (None, ACC.BUILTIN)
+        for b in (self.b_tok, self.b_del):
+            b.setEnabled(added)
+        self.b_ren.setEnabled(aid is not None)
+        r, n = self.list.currentRow(), self.list.count()
+        self.b_up.setEnabled(r > 0); self.b_down.setEnabled(0 <= r < n - 1)
+
+    def _move(self, step):
+        aid = self._cur(); ACC.move(aid, step); self._fill(aid)
+
+    def _rename(self):
+        aid = self._cur()
+        new, ok = QtWidgets.QInputDialog.getText(self, "Rename account", "Name:", text=ACC.label(aid))
+        if ok and new.strip():
+            ACC.rename(aid, new); self._fill(aid)
+
+    def _remove(self):
+        aid = self._cur()
+        if QtWidgets.QMessageBox.question(self, "Remove account",
+                                          "Remove '%s' from FX AI? Its saved token is deleted." % ACC.label(aid)) \
+                == QtWidgets.QMessageBox.Yes:
+            ACC.remove(aid); self._fill()
+
+    def _token(self):
+        aid = self._cur()
+        d = TokenDialog("New token for %s" % ACC.label(aid), ask_name=False, parent=self)
+        if d.exec() == QtWidgets.QDialog.Accepted:
+            try:
+                ACC.set_token(aid, d.token()); self._fill(aid)
+            except ValueError as e:
+                QtWidgets.QMessageBox.warning(self, "Token", str(e))
+
+    def _add(self):
+        d = TokenDialog("Add a Claude account", ask_name=True, parent=self)
+        if d.exec() == QtWidgets.QDialog.Accepted:
+            try:
+                self._fill(ACC.add(d.name(), d.token()))
+            except ValueError as e:
+                QtWidgets.QMessageBox.warning(self, "Add account", str(e))
+
+
+def open_setup_token():
+    """`claude setup-token` in its own console window: it signs in through the browser and prints a
+    long-lived token for the account the browser is signed in as. Started without this
+    machine's login variables, so it never just echoes the current account."""
+    import subprocess
+    exe = claude_exe()
+    if not exe:
+        raise RuntimeError("claude CLI not found")
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("CLAUDE") and k not in ACC.LOGIN_VARS
+           and k not in ("PYTHONHOME", "PYTHONPATH", "PYTHONSTARTUP")}
+    subprocess.Popen(["cmd", "/k", exe, "setup-token"], env=env,
+                     creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10))
+
+
+class TokenDialog(QtWidgets.QDialog):
+    def __init__(self, title, ask_name=True, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title); self.setMinimumWidth(500)
+        self.setStyleSheet(parent.styleSheet() if parent is not None else "")
+        lay = QtWidgets.QVBoxLayout(self); lay.setSpacing(8)
+        steps = QtWidgets.QLabel(
+            "1. Click <b>Get a token</b>. A window runs <code>claude setup-token</code> and opens the browser.<br>"
+            "2. Sign in to claude.ai as the account you want to add. If the browser is already signed in as "
+            "someone else, copy the link from that window into a private window instead.<br>"
+            "3. Copy the token it prints (it starts with <code>sk-ant-</code>) and paste it below.")
+        steps.setWordWrap(True); steps.setTextFormat(QtCore.Qt.RichText); lay.addWidget(steps)
+        get = QtWidgets.QPushButton("Get a token..."); get.clicked.connect(self._get)
+        grow = QtWidgets.QHBoxLayout(); grow.addWidget(get); grow.addStretch(1); lay.addLayout(grow)
+        self.name_edit = QtWidgets.QLineEdit(); self.name_edit.setPlaceholderText("Name, e.g. Pui or Chaya")
+        if ask_name:
+            lay.addWidget(QtWidgets.QLabel("Name")); lay.addWidget(self.name_edit)
+        lay.addWidget(QtWidgets.QLabel("Token"))
+        self.tok = QtWidgets.QLineEdit(); self.tok.setEchoMode(QtWidgets.QLineEdit.Password)
+        self.tok.setPlaceholderText("sk-ant-oat01-..."); lay.addWidget(self.tok)
+        hint = QtWidgets.QLabel("Saved encrypted for this Windows user only."); hint.setObjectName("dim")
+        lay.addWidget(hint)
+        bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._ok); bb.rejected.connect(self.reject); lay.addWidget(bb)
+
+    def _get(self):
+        try:
+            open_setup_token()
+        except (RuntimeError, OSError) as e:
+            QtWidgets.QMessageBox.warning(self, "Get a token", str(e))
+
+    def _ok(self):
+        if not ACC.looks_like_token(self.tok.text()):
+            QtWidgets.QMessageBox.warning(self, "Token", "That doesn't look like a Claude token (it starts with sk-ant-).")
+            return
+        self.accept()
+
+    def name(self):
+        return self.name_edit.text()
+
+    def token(self):
+        return self.tok.text()
+
+
 class FindBar(QtWidgets.QFrame):
     """Ctrl+F: find in the chat on screen. Enter / Shift+Enter step, Esc closes."""
     def __init__(self, panel, parent):
@@ -2520,6 +2750,7 @@ class ChatPanel(QtWidgets.QWidget):
         self.convos = []                     # every conversation opened in this Houdini
         self.cur = None
         self.default_model = None            # what a new session starts on: the last one picked
+        self.default_account = ACC.AUTO      # same for the account (brother_accounts)
         self.models = {}                     # model value -> the CLI's description of it
         self.model_list = []
         self._spin = 0
@@ -2542,7 +2773,8 @@ class ChatPanel(QtWidgets.QWidget):
         self.setStyleSheet(CSS + (EMBED_CSS if embedded else ""))
         self._build()
         # the bar's labelled buttons keep their width; a narrow pane squashed "Manual" to "an"
-        for b in (self.plus_btn, self.mic_btn, self.mode_btn, self.model_btn, self.effort_btn, self.send_btn, self.stop_btn):
+        for b in (self.plus_btn, self.mic_btn, self.mode_btn, self.account_btn, self.model_btn, self.effort_btn,
+                  self.send_btn, self.stop_btn):
             b.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
         if embedded:
             self.setMinimumSize(320, 260)
@@ -2708,6 +2940,8 @@ class ChatPanel(QtWidgets.QWidget):
         bar.addWidget(self.mode_btn)
         bar.addStretch(1)
         self.status = QtWidgets.QLabel(objectName="dim"); bar.addWidget(self.status)
+        self.account_btn = QtWidgets.QPushButton("Auto", objectName="bar"); self.account_btn.clicked.connect(self._account_menu)
+        self.account_btn.setToolTip("Claude account for this chat"); bar.addWidget(self.account_btn)
         self.model_btn = QtWidgets.QPushButton("Default", objectName="bar"); self.model_btn.clicked.connect(self._model_menu)
         bar.addWidget(self.model_btn)
         self.effort_btn = QtWidgets.QPushButton("Default", objectName="bar"); self.effort_btn.clicked.connect(self._effort_menu)
@@ -3078,6 +3312,56 @@ class ChatPanel(QtWidgets.QWidget):
         self.cur.set_fast(on)
         self.convo_changed(self.cur)
 
+    def _account_text(self, c):
+        """'Auto · Pui' while Auto is on, the account's name when one is pinned."""
+        live = c.account or ACC.resolve(c.account_choice)
+        name = ACC.label(live) if live else "Auto"
+        if c.account_choice in (None, ACC.AUTO) and len(ACC.accounts()) > 1:
+            return "Auto  ·  %s" % name
+        return name
+
+    def _account_menu(self):
+        if self.cur is None:
+            return
+        c = self.cur
+        auto = c.account_choice in (None, ACC.AUTO)
+
+        def desc(aid):
+            until = ACC.limited_until(aid)
+            if until:
+                return "Out of quota until %s" % datetime.datetime.fromtimestamp(until).strftime("%a %H:%M")
+            return "This machine's own Claude login" if aid == ACC.BUILTIN else ""
+        rows = [{"label": "Auto", "checked": auto, "desc": "First account in the list that still has quota",
+                 "do": (lambda: self._pick_account(ACC.AUTO))}, "-"]
+        for n, a in enumerate(ACC.accounts(), 1):
+            pinned = not auto and c.account_choice == a["id"]
+            rows.append({"label": a["label"], "desc": desc(a["id"]), "checked": pinned,
+                         "badge": "in use" if auto and c.account == a["id"] else None,
+                         "key": "" if pinned else str(n) if n < 10 else "",
+                         "do": (lambda aid=a["id"]: self._pick_account(aid))})
+        rows += ["-", {"label": "Switch when a limit is hit", "toggle": ACC.auto_switch(),
+                       "tip": "Out of quota mid-chat: move to the next account and send the message again",
+                       "do": (lambda: (ACC.set_auto_switch(not ACC.auto_switch()), self.convo_changed(self.cur)))},
+                 {"label": "Manage accounts...", "do": self.manage_accounts}]
+        PopupMenu(rows, header="Claude account", width=290, parent=self).show_at(self.account_btn, align="right")
+
+    def _pick_account(self, choice):
+        self.default_account = choice
+        self.cur.set_account(choice)
+        if choice != self.cur.account and self.cur.working:
+            self.cur.add_note("Account changes to %s after this turn." % ACC.label(ACC.resolve(choice)), "#77756f")
+        self.convo_changed(self.cur)
+
+    def manage_accounts(self):
+        AccountsDialog(self).exec()
+        if self.default_account not in (None, ACC.AUTO) and not ACC.exists(self.default_account):
+            self.default_account = ACC.AUTO
+        for c in self.convos:                    # a removed account falls back to Auto
+            if c.account_choice not in (None, ACC.AUTO) and not ACC.exists(c.account_choice):
+                c.set_account(ACC.AUTO)
+        if self.cur is not None:
+            self.convo_changed(self.cur)
+
     def _pick_model(self, v):
         self.default_model = v
         self.cur.set_model(v)
@@ -3261,6 +3545,7 @@ class ChatPanel(QtWidgets.QWidget):
         # the bar always shows the on-screen conversation's REAL mode, model and effort
         self.mode_btn.setText(dict((v, l) for v, l, _d, _b in MODE_ROWS).get(c.mode, c.mode))
         self.model_btn.setText(self._model_name(c.model) + ("  ·  Fast" if c.fast else ""))
+        self.account_btn.setText(self._account_text(c))
         levels = self._levels()
         self.effort_btn.setVisible(bool(levels))
         lvl = c.effort or c.applied_effort
@@ -3279,8 +3564,10 @@ class ChatPanel(QtWidgets.QWidget):
         self.tasks_label.setToolTip("\n".join(c.tasks.values()))
         self.status.setText("")
 
-    def rate_limit(self, info):
+    def rate_limit(self, info, convo=None):
         """Plan usage from the CLI: warn before the limit, say plainly when it's hit."""
+        if convo is not None and convo is not self.cur:
+            return                                   # another chat's account: not this one's news
         st = info.get("status")
         if st not in ("allowed_warning", "rejected"):
             self.limit_bar.hide(); return
@@ -3294,10 +3581,15 @@ class ChatPanel(QtWidgets.QWidget):
                 pass
         used = info.get("utilization")
         pct = (" (%d%% used)" % round(float(used) * 100)) if isinstance(used, (int, float)) and used <= 1 else ""
+        who = ""
+        if convo is not None and convo.account and len(ACC.accounts()) > 1:
+            who = " on %s" % ACC.label(convo.account)
         if st == "rejected":
-            self.limit_bar.setText("Claude %s limit reached%s%s. Messages will wait until then." % (kind, pct, when))
+            nxt = ACC.next_account(convo.account) if convo is not None and convo.account else None
+            then = ("Switching to %s." % ACC.label(nxt)) if nxt else "Messages will wait until then."
+            self.limit_bar.setText("Claude %s limit reached%s%s%s. %s" % (kind, who, pct, when, then))
         else:
-            self.limit_bar.setText("Getting close to the Claude %s limit%s%s." % (kind, pct, when))
+            self.limit_bar.setText("Getting close to the Claude %s limit%s%s%s." % (kind, who, pct, when))
         self.limit_bar.show()
 
     def refresh_soon(self):
