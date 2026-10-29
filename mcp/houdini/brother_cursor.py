@@ -15,6 +15,8 @@ import math, os, time
 import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
+import brother_demo_plan
+
 WHITE = QtGui.QColor(255, 255, 255)
 BLACK = QtGui.QColor(0, 0, 0)
 RED = QtGui.QColor(255, 30, 50)
@@ -291,7 +293,85 @@ def paint_mosh(p, rect, s, level, st):
     p.restore()
 
 
-_CTRL = {"depth": 0, "last": 0.0}     # > 0 while a controlling request is running
+_CTRL = {"depth": 0, "last": 0.0,     # depth > 0 while a controlling request is running
+         "held_until": 0.0}           # a hold keeps the frame on BETWEEN requests until then
+
+
+def hold(ttl=5.0):
+    """Keep the control frame on for ttl seconds from now (clamped 0.5..120), whatever the
+    request count says. A runner renews it every tick; if it dies without cleaning up, the
+    frame can stay on at most ttl seconds - a hold never needs a release to end."""
+    _CTRL["held_until"] = time.time() + brother_demo_plan.clamp_ttl(ttl)
+    if SETTINGS["vignette"]:
+        ov = _overlay()
+        if ov.ctrl_level < 0.6:
+            ov.ctrl_level = 0.6
+            ov.repaint()
+    return _CTRL["held_until"]
+
+
+def release_hold():
+    _CTRL["held_until"] = 0.0
+    _CTRL["last"] = time.time()          # fade out normally (LINGER), not a hard cut
+
+
+def held():
+    return time.time() < _CTRL["held_until"]
+
+
+# A TASK holds the control frame at full strength from its first step to its last - across every
+# request, job and pause in between (Plug 29 Oct: the frame kept fading out while VEX was being
+# typed) - and shows a banner saying Esc stops it. The runner beats it each step; a runner that dies
+# without ending it lets the frame fade after `ttl` seconds. Esc anywhere in Houdini cancels it: the
+# next beat reports cancelled and the runner stops.
+_TASK = {"active": False, "label": "", "cancelled": False, "ttl": 20.0}
+
+
+class _TaskEsc(QtCore.QObject):
+    def eventFilter(self, obj, ev):
+        if _TASK["active"] and ev.type() == QtCore.QEvent.KeyPress and ev.key() == QtCore.Qt.Key_Escape:
+            _TASK["cancelled"] = True
+            release_hold()
+        return False
+
+
+_TASK_ESC = {"f": None}
+
+
+def op_task(args):
+    """action = begin | beat | end. begin(label, ttl=20): frame on at full strength + Esc banner.
+    beat: renew (returns cancelled=True once Esc was pressed - the runner must stop). end: frame off."""
+    action = args.get("action", "beat")
+    app = QtWidgets.QApplication.instance()
+    if action == "begin":
+        _TASK.update(active=True, cancelled=False, label=str(args.get("label") or ""),
+                     ttl=float(args.get("ttl", 20.0)))
+        if _TASK_ESC["f"] is None:
+            _TASK_ESC["f"] = _TaskEsc()
+            app.installEventFilter(_TASK_ESC["f"])
+        hold(_TASK["ttl"])
+        _overlay().show()
+    elif action == "beat":
+        if _TASK["active"] and not _TASK["cancelled"]:
+            hold(_TASK["ttl"])
+    elif action == "end":
+        _TASK["active"] = False
+        if _TASK_ESC["f"] is not None:
+            app.removeEventFilter(_TASK_ESC["f"])
+            _TASK_ESC["f"] = None
+        release_hold()
+    return {"active": _TASK["active"], "cancelled": _TASK["cancelled"],
+            "seconds_left": round(max(0.0, _CTRL["held_until"] - time.time()), 2)}
+
+
+def paint_task_banner(p, rect):
+    """Plain white text, top centre, while a task is live - no box, no outline (Plug 29 Oct)."""
+    text = "%s  \u2014  Press Esc to stop" % (_TASK["label"] or "Brother is working")
+    f = QtGui.QFont(p.font()); f.setPointSizeF(11); f.setBold(True)
+    p.setFont(f)
+    r = QtCore.QRectF(rect.left(), rect.top() + 12, rect.width(), QtGui.QFontMetrics(f).height() + 8)
+    p.setPen(WHITE)
+    p.drawText(r, QtCore.Qt.AlignCenter, text)
 
 
 def control(active):
@@ -413,6 +493,7 @@ class _Overlay(QtWidgets.QWidget):
         self.ctrl_level = 0.0            # 0..1, eased - the edge fade's opacity
         self.edge_slices, self.edge_split = [], 1
         self.mosh = None
+        self.wire = None                 # (QPointF, QPointF) - a wire being pulled, drawn only
         self._follow()
         main.installEventFilter(self)
         self._timer = QtCore.QTimer(self)
@@ -453,7 +534,8 @@ class _Overlay(QtWidgets.QWidget):
         elif random.random() < 0.5:
             self.glitch, self.split = {}, 1
         self.ripples = [r for r in self.ripples if now - r[1] < 0.6]
-        target = 1.0 if (_CTRL["depth"] > 0 or now - _CTRL["last"] < 1.2) else 0.0
+        target = brother_demo_plan.edge_target(_CTRL["depth"], _CTRL["last"],
+                                               _CTRL["held_until"], now)
         self.ctrl_level += (target - self.ctrl_level) * (0.25 if target > self.ctrl_level else 0.12)
         if self.ctrl_level < 0.005:
             self.ctrl_level = 0.0
@@ -475,7 +557,8 @@ class _Overlay(QtWidgets.QWidget):
                 self.edge_slices, self.edge_split = [], 1
         if self.ctrl_level == 0.0:
             self.mosh = None                                               # built once per showing, not per frame
-        if now - self.last_active > 20 and not self.ripples and self.ctrl_level == 0.0:
+        if brother_demo_plan.should_hide(now, self.last_active, self.ripples, self.ctrl_level,
+                                         _CTRL["held_until"]):
             self.hide()                                                    # idle: fade out of the way
         self.update()
 
@@ -510,6 +593,17 @@ class _Overlay(QtWidgets.QWidget):
             p.setPen(QtGui.QPen(c, 3)); p.setBrush(QtCore.Qt.NoBrush)
             r = 6 + 26 * k
             p.drawEllipse(pt, r, r)
+        if self.wire is not None:                                           # a wire being pulled
+            a, b = self.wire
+            for width, alpha in ((9, 0.12), (5, 0.25)):
+                g = QtGui.QColor(WHITE); g.setAlphaF(alpha)
+                p.setPen(QtGui.QPen(g, width, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
+                p.drawLine(a, b)
+            p.setPen(QtGui.QPen(PINK, 2.5, QtCore.Qt.SolidLine, QtCore.Qt.RoundCap))
+            p.drawLine(a, b)
+            p.setBrush(PINK); p.drawEllipse(a, 4, 4)
+        if _TASK["active"] and not _TASK["cancelled"]:
+            paint_task_banner(p, QtCore.QRectF(self.rect()))
         if self.has_cursor:
             paint_cursor(p, self.pos_.x(), self.pos_.y(), SETTINGS, self.glitch, self.split)
 
@@ -547,17 +641,17 @@ def _pump(seconds):
         time.sleep(0.008)
 
 
-def _glide(to, seconds=None):
+def _glide(to, seconds=None, speed=1.0):
     ov = _overlay()
     a = QtCore.QPointF(ov.pos_)
     b = QtCore.QPointF(*to)
     dist = math.hypot(b.x() - a.x(), b.y() - a.y())
-    seconds = seconds if seconds is not None else min(0.9, 0.25 + dist / 1800.0)
+    seconds = seconds if seconds is not None else min(0.9, 0.25 + dist / 1800.0) / max(speed, 0.1)
     t0 = time.time()
     app = QtWidgets.QApplication.instance()
     while True:
         k = min(1.0, (time.time() - t0) / seconds) if seconds > 0 else 1.0
-        e = k * k * (3 - 2 * k)                                             # ease in-out
+        e = ease_in_out_quint(k)                                            # ease in-out (strong)
         ov.pos_ = QtCore.QPointF(a.x() + (b.x() - a.x()) * e, a.y() + (b.y() - a.y()) * e)
         ov.last_active = ov.last_move = time.time()
         ov.has_cursor = True
@@ -763,12 +857,14 @@ def _network_editor_at(x, y):
 def op_create_node(args):
     """Glide to (x, y) in a Network Editor, click there, and create a node of `type` right
     under the cursor - as ONE 'Brother:' undo step. The TAB menu can't be used for this:
-    Houdini opens it at Plug's REAL mouse position, so the node would land there instead."""
+    Houdini opens it at Plug's REAL mouse position, so the node would land there instead.
+    speed (default 1): >1 shortens the glide and the pauses by that factor."""
     x, y = args["x"], args["y"]
-    ov = _glide((x, y))
+    speed = max(float(args.get("speed", 1.0)), 0.1)
+    ov = _glide((x, y), speed=speed)
     ne, pos = _network_editor_at(x, y)
     ov.ripples.append((QtCore.QPointF(x, y), time.time()))
-    _pump(0.15)
+    _pump(0.15 / speed)
     parent = ne.pwd()
     with hou.undos.group("Brother: create %s" % args["type"]):
         n = parent.createNode(args["type"], args.get("name") or None)
@@ -776,7 +872,7 @@ def op_create_node(args):
         if args.get("input"):
             n.setInput(0, parent.node(args["input"]) or hou.node(args["input"]))
         n.setSelected(True, clear_all_selected=True)
-    _pump(0.3)
+    _pump(0.3 / speed)
     return {"created": n.path(), "type": n.type().name(), "network_pos": list(n.position()),
             "undo_label": "Brother: create %s" % args["type"]}
 
@@ -784,6 +880,93 @@ def op_create_node(args):
 def op_cursor_hide(args):
     remove()
     return {"hidden": True}
+
+
+# ----------------------------------------------------------------------------- hold + drag
+def op_control_hold(args):
+    """action = start | beat | stop. start/beat keep the control frame on for ttl seconds
+    (default 8, max 120) so it does not drop between an AI's tool calls; stop lets it fade."""
+    action = args.get("action", "start")
+    if action == "stop":
+        release_hold()
+        return {"held": False}
+    until = hold(args.get("ttl", 8.0))
+    return {"held": True, "seconds_left": round(until - time.time(), 2)}
+
+
+def net_point(ne, pos):
+    """A network-space position -> main-window pixels (same mapping as _node_point, no pan)."""
+    vb, (w, h) = ne.visibleBounds(), ne.screenBounds().size()
+    s = ((pos[0] - vb.min()[0]) / (vb.max()[0] - vb.min()[0]) * w,
+         (pos[1] - vb.min()[1]) / (vb.max()[1] - vb.min()[1]) * h)
+    g = ne.qtScreenGeometry()
+    p = _main().mapFromGlobal(QtCore.QPoint(int(g.x() + s[0]), int(g.y() + g.height() - s[1])))
+    return (p.x(), p.y())
+
+
+def drag_frames(a, b, seconds=0.8, wire=False):
+    """A REAL drag: left press at a, a MouseMove every frame with the button held, release at b
+    - Qt events to the widget under a, with the cursor drawn along. A generator: each yield is
+    one frame, so a runner can stop between frames. The release is in `finally`: closing the
+    generator early (Stop, Esc, an error) still lets the button go, so no input is left stuck."""
+    ov = _overlay()
+    w, _, _ = _target(*a)
+    mw, app = _main(), QtWidgets.QApplication.instance()
+    left, none = QtCore.Qt.LeftButton, QtCore.Qt.NoButton
+
+    def send(kind, pt, btn, btns):
+        gp = mw.mapToGlobal(QtCore.QPoint(int(pt[0]), int(pt[1])))
+        lp = QtCore.QPointF(w.mapFromGlobal(gp))
+        with hou.undos.disabler():
+            app.sendEvent(w, QtGui.QMouseEvent(kind, lp, lp, QtCore.QPointF(gp), btn, btns,
+                                               QtCore.Qt.NoModifier))
+
+    pressed, last = False, a
+    try:
+        send(QtCore.QEvent.MouseMove, a, none, none)
+        send(QtCore.QEvent.MouseButtonPress, a, left, left)
+        pressed = True
+        ov.ripples.append((QtCore.QPointF(*a), time.time()))
+        t_end = time.time() + 0.08
+        while time.time() < t_end:
+            yield
+        t0 = time.time()
+        while True:
+            k = min(1.0, (time.time() - t0) / seconds)
+            e = ease_in_out_quint(k)
+            last = (a[0] + (b[0] - a[0]) * e, a[1] + (b[1] - a[1]) * e)
+            ov.pos_ = QtCore.QPointF(*last)
+            ov.last_active = ov.last_move = time.time()
+            ov.has_cursor = True
+            ov.wire = None        # no pink guide (Plug 29 Oct); a real port drag shows Houdini's own wire
+            send(QtCore.QEvent.MouseMove, last, none, left)
+            ov.update()
+            if k >= 1.0:
+                break
+            yield
+    finally:
+        if pressed:
+            send(QtCore.QEvent.MouseButtonRelease, last, left, none)
+        ov.wire = None
+        ov.update()
+
+
+def op_drag(args):
+    """Press at (x0, y0), move with the button held, release at (x1, y1) - a real, visible
+    drag (e.g. a node in a Network Editor). Reports what it pressed on; whether the target
+    accepted it as a drag is for the caller to check (e.g. did the node move).
+    In a Network Editor it selects / rubber-bands, but only moves a node when the editor is
+    visible (not covered by another window) at the pointer - see "EVENT PATH, MEASURED" below.
+    Use move_node / wire_nodes there; this stays for Qt-native widgets and event tests."""
+    a, b = (args["x0"], args["y0"]), (args["x1"], args["y1"])
+    _glide(a)
+    w, _, _ = _target(*a)
+    app = QtWidgets.QApplication.instance()
+    for _ in drag_frames(a, b, float(args.get("seconds", 0.8)), bool(args.get("wire"))):
+        app.processEvents(QtCore.QEventLoop.AllEvents, 10)
+        time.sleep(0.012)
+    _pump(0.2)
+    return {"pressed": list(a), "released": list(b), "widget": _describe(w)}
 
 
 # ----------------------------------------------------------------------------- panes by API
@@ -819,26 +1002,119 @@ def _editor_for(node):
 
 
 def _node_point(ne, node):
-    """Centre of `node` in main-window pixels, panning the editor first if it is off screen."""
-    def to_window():
-        # map through visibleBounds ourselves: posToScreen keeps answering for the OLD view
-        # until Houdini repaints, so right after a pan it points at where the node used to be
-        vb, (w, h) = ne.visibleBounds(), ne.screenBounds().size()
-        c = node.position() + node.size() * 0.5
-        s = ((c[0] - vb.min()[0]) / (vb.max()[0] - vb.min()[0]) * w,
-             (c[1] - vb.min()[1]) / (vb.max()[1] - vb.min()[1]) * h)
-        g = ne.qtScreenGeometry()
-        gp = QtCore.QPoint(int(g.x() + s[0]), int(g.y() + g.height() - s[1]))
-        return _main().mapFromGlobal(gp), s
-    p, s = to_window()
+    """Where a real press on `node` lands (its header, from the editor's own hit-test), in
+    main-window pixels, panning the editor first if it is off screen. NOT pos+size*0.5 - that
+    point is offset from the drawn tile (see _native_hits)."""
+    px, _ = _native_anchor(ne, node, "body")
+    return _px_to_main(ne, px)
+
+
+def _editor_px(ne, pos):
+    """Network position -> editor pixels (bottom-origin), mapped through visibleBounds (current
+    even right after a pan, unlike posToScreen)."""
+    vb, (w, h) = ne.visibleBounds(), ne.screenBounds().size()
+    return ((pos[0] - vb.min()[0]) / (vb.max()[0] - vb.min()[0]) * w,
+            (pos[1] - vb.min()[1]) / (vb.max()[1] - vb.min()[1]) * h)
+
+
+def _px_to_main(ne, s):
+    """Editor pixels (bottom-origin) -> main-window pixels (the overlay / click space)."""
+    g = ne.qtScreenGeometry()
+    return _main().mapFromGlobal(QtCore.QPoint(int(round(g.x() + s[0])),
+                                               int(round(g.y() + g.height() - s[1]))))
+
+
+def _native_hits(ne, node, step=2):
+    """The editor's OWN hit items for `node`, from networkItemsInBox (the same hit-test a real
+    click uses), as {(kind, index): [x0, y0, x1, y1]} in editor pixels, bottom-origin.
+    Measured 2026-10-25: node.position()/size() through posToScreen is NOT where the tile is
+    drawn (offset by ~15 px x / ~60 px y on a COP wrangle), and COP ports are dots in the bottom
+    row (input left, output right), not the top/bottom edge centres - so press/anchor points come
+    from here, never from pos+size*0.5."""
+    lo, hi = _editor_px(ne, node.position()), _editor_px(ne, node.position() + node.size())
+    h = max(8.0, hi[1] - lo[1])
+    x0, x1, y0, y1 = int(lo[0] - h), int(hi[0] + h), int(lo[1] - 2 * h), int(hi[1] + h)
+    out = {}
+    for y in range(y0, y1, step):
+        for x in range(x0, x1, step):
+            # for_select=False: with True the editor leaves out connector items (ports)
+            for it in ne.networkItemsInBox(hou.Vector2(x, y), hou.Vector2(x + step, y + step),
+                                           for_select=False):
+                if it[0] != node:
+                    continue
+                key = (it[1], it[2] if len(it) > 2 else -1)
+                b = out.get(key)
+                out[key] = [x, y, x + step, y + step] if b is None else \
+                    [min(b[0], x), min(b[1], y), max(b[2], x + step), max(b[3], y + step)]
+    return out
+
+
+def _box_centre(b):
+    return ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+
+
+_DRAWN = {}      # node path -> (node's editor px when its hits were read, hits)
+
+
+def _shift_hits(hits, frm, to):
+    dx, dy = to[0] - frm[0], to[1] - frm[1]
+    return {k: [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy] for k, b in hits.items()}
+
+
+def _ensure_on_screen(ne, node):
+    s = _editor_px(ne, node.position() + node.size() * 0.5)
     w, h = ne.screenBounds().size()
-    if not (20 <= s[0] <= w - 20 and 20 <= s[1] <= h - 20):
+    if not (60 <= s[0] <= w - 60 and 60 <= s[1] <= h - 60):
         vb = ne.visibleBounds()
         vb.translate(node.position() + node.size() * 0.5 - vb.center())
         ne.setVisibleBounds(vb)
         _pump(0.2)
-        p, s = to_window()
-    return p
+
+
+def _native_anchor(ne, node, kind="body", index=0):
+    """Where a REAL press would land for `node`, from the editor's hit-test, in editor pixels
+    (bottom-origin). kind: body (the node header, which drags/selects) | input | output.
+    Returns (pixel, hit_kind) or raises if the editor reports no such item on screen.
+
+    MEASURED: networkItemsInBox answers from the LAST PAINTED frame, and the editor only paints
+    once the running Python call returns. So hits are read where the node is DRAWN; the item's
+    offset from the node's drawn pixel is then re-applied to where the node is NOW (and to the
+    view after any pan). A node moved earlier in the same call, before any paint, is therefore
+    still anchored correctly as long as it was drawn somewhere on screen."""
+    hits = _native_hits(ne, node)
+    drawn = _DRAWN.get(node.path())
+    if hits:
+        _DRAWN[node.path()] = drawn = (tuple(_editor_px(ne, node.position())), hits)
+    if drawn is None:
+        _ensure_on_screen(ne, node)
+        raise RuntimeError("the Network Editor has not drawn %s yet (not on screen when last "
+                           "painted) - retry after Houdini repaints" % node.path())
+    hits = _shift_hits(drawn[1], drawn[0], _editor_px(ne, node.position()))
+    s = _editor_px(ne, node.position() + node.size() * 0.5)
+    w, h = ne.screenBounds().size()
+    if not (60 <= s[0] <= w - 60 and 60 <= s[1] <= h - 60):     # pan, then shift by the pan
+        b0 = _editor_px(ne, node.position())
+        _ensure_on_screen(ne, node)
+        hits = _shift_hits(hits, b0, _editor_px(ne, node.position()))
+    if kind == "body":
+        for k in ("node", "preview", "connectorarea"):
+            boxes = [b for (kk, _), b in hits.items() if kk == k]
+            if boxes:
+                return _box_centre(boxes[0]), k
+    else:
+        b = hits.get((kind, index))
+        if b:
+            return _box_centre(b), kind
+    raise RuntimeError("the Network Editor reports no %s%s hit for %s (found: %s)"
+                       % (kind, "" if kind == "body" else " %d" % index, node.path(),
+                          sorted(set(k for k, _ in hits))))
+
+
+def editor_visible_at(ne, px):
+    """Is the editor itself visible at this editor pixel (not covered by another app's window)?
+    hou's own isPosInside(pos, False) - the test the node-move handler uses: when it is False an
+    event drag is treated as 'dragged out of the view' and the node does not move."""
+    return bool(ne.isPosInside(hou.Vector2(*px), False))
 
 
 def _parm_pane_for(ne, node):
@@ -899,6 +1175,24 @@ def op_pane_screenshot(args):
             "shows": tab.currentNode().path() if tab.type() == hou.paneTabType.Parm and tab.currentNode() else None}
 
 
+def op_capture_pane(args):
+    """The Network Editor as Houdini drew it, EVEN WHEN another window covers it. Uses Win32
+    PrintWindow(PW_RENDERFULLCONTENT) on Houdini's own window, so nothing is raised or focused
+    and the cursor is untouched. Fails closed on a hidden/wrong/unknown pane or a black image.
+    The result says whether the pane was covered at the time (`occlusion`)."""
+    import importlib
+    import brother_capture as bcap
+    importlib.reload(bcap)
+    folder = os.path.join(os.environ.get("USERPROFILE") or os.path.expanduser("~"), ".houdini_brother")
+    try:
+        meta, _img, _png = bcap.capture_pane(pane_name=args.get("pane") or None, save_dir=folder,
+                                             tag="capture_%d" % os.getpid())
+    except bcap.CaptureError as e:
+        raise RuntimeError("capture refused: %s" % e)
+    meta["file"] = meta.pop("path")
+    return meta
+
+
 def op_set_parm_shown(args):
     """Set a parm through the API - exact, one 'Brother:' undo step - while the cursor shows
     Plug where: it clicks the node (so its Parameter pane shows it), then glides to the field
@@ -925,7 +1219,319 @@ def op_set_parm_shown(args):
     return res
 
 
+# ----------------------------------------------------------------------------- API-backed graph actions
+# EVENT PATH, MEASURED (2026-10-25, Houdini 21.0.671, Windows, isolated /obj/BROTHER_INDEP_REG,
+# OS cursor untouched, no setPosition in the test). This REPLACES an earlier note that said the
+# editor ignores injected input - that was wrong (those tests ran inline, with no event-loop turn
+# between press and release, and pressed at pos+size*0.5, which is not where the tile is drawn):
+#   - QMouseEvent move/press/release sent to the RE_GLDrawable QWidget AS A JOB (frames between)
+#     reaches nodegraph.handleEvent as mousedown/mousedrag/mouseup with selected=<node>/node,
+#     dragging=1, lmb=1. A click on the native header SELECTS the node; a background drag makes a
+#     working rubber-band selection.
+#   - A press+drag on the header reaches NodeMouseHandler -> NodeMoveHandler, which then REFUSES
+#     to move: MovableItemMoveHandler resets the drag to 0 whenever editor.isPosInside(mousepos,
+#     False) is False, i.e. "the pointer has left the view" (drag-and-drop to another app). That
+#     test asks the OS which window is visible at the point; with another app's window covering
+#     Houdini there (measured: a maximized Chrome tab over the whole editor) it is False for every
+#     pixel, so the node cannot move by event - by Houdini's design, not by blocked input.
+#   - So a genuine event-driven node move needs the editor visible at the pointer. Bringing
+#     Houdini forward would take Plug's focus, so Brother does not do it. The actions below change
+#     the graph through hou (setSelected / setPosition / setInput) while Brother's own cursor
+#     shows where, anchored on the editor's native hit-test: they are API-BACKED, and every
+#     result says so in "method" and reports editor_visible_at_anchor.
+_API = "api-backed (hou), not an input event"
+
+
+class _EscWatch(QtCore.QObject):
+    """Esc pressed anywhere in Houdini while an action runs -> cancel it."""
+    def __init__(self):
+        super().__init__()
+        self.hit = False
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QtCore.QEvent.KeyPress and ev.key() == QtCore.Qt.Key_Escape:
+            self.hit = True
+        return False
+
+
+def _node_centre(node):
+    return node.position() + node.size() * 0.5
+
+
+def ease_in_out_quint(k):
+    """Node moves ease hard in and out (Plug 29 Oct: smoothstep's 1.5x mid-speed read as a constant
+    slide). Filmed: ~0.25 s of slow start, a fast middle, a slow settle."""
+    return 16 * k ** 5 if k < 0.5 else 1 - (-2 * k + 2) ** 5 / 2
+
+
+def move_frames(node, to_pos, seconds=0.8, anchor_px=None, trace=None):
+    """Move `node` to network position `to_pos` (lower-left, like setPosition) visibly: the cursor
+    grabs it and the NODE itself travels frame by frame. A generator - each yield is a frame. Done
+    -> one 'Brother: move' undo step. Closed early (Esc, Stop, error) -> the node goes back to
+    where it was and nothing is left in the undo history.
+    anchor_px = the grab point in editor pixels (from _native_anchor); the cursor TIP keeps the
+    same offset from the node all the way, so it never drifts off the tile it 'holds'."""
+    ne = _editor_for(node)
+    start = hou.Vector2(node.position())
+    end = hou.Vector2(to_pos)
+    if anchor_px is None:
+        anchor_px, _ = _native_anchor(ne, node, "body")
+    s0 = _editor_px(ne, start)
+    off = (anchor_px[0] - s0[0], anchor_px[1] - s0[1])
+    done = False
+    try:
+        t0 = time.time()
+        while True:
+            k = min(1.0, (time.time() - t0) / seconds) if seconds > 0 else 1.0
+            e = ease_in_out_quint(k)
+            p = start + (end - start) * e
+            with hou.undos.disabler():
+                node.setPosition(p)
+            ov = _overlay()
+            sp = _editor_px(ne, p)
+            tip = _px_to_main(ne, (sp[0] + off[0], sp[1] + off[1]))
+            ov.pos_ = QtCore.QPointF(tip)
+            if trace is not None:
+                trace.append({"k": round(k, 3), "pos": [round(p[0], 4), round(p[1], 4)],
+                              "tip_main": [tip.x(), tip.y()], "grab_off_px": list(off)})
+            ov.last_active = ov.last_move = time.time()
+            ov.has_cursor = True
+            ov.update()
+            if k >= 1.0:
+                break
+            yield
+        done = True
+    finally:
+        with hou.undos.disabler():
+            node.setPosition(start)
+        if done:                                   # one clean undo step: start -> end
+            with hou.undos.group("Brother: move %s" % node.name()):
+                node.setPosition(end)
+
+
+def _run(frames, budget=10.0, on_frame=None):
+    """Drive a frame generator on the main thread, bounded in time, cancellable with Esc.
+    on_frame(i) is called after each frame (tests use it to record and to inject an Esc)."""
+    app = QtWidgets.QApplication.instance()
+    watch = _EscWatch()
+    app.installEventFilter(watch)
+    end = time.time() + budget
+    reason = None
+    try:
+        for i, _ in enumerate(frames):
+            app.processEvents(QtCore.QEventLoop.AllEvents, 10)
+            if on_frame:
+                on_frame(i)
+            if watch.hit:
+                reason = "esc"
+            elif time.time() > end:
+                reason = "time budget"
+            if reason:
+                frames.close()                    # runs the generator's finally: cleanup/undo
+                break
+            time.sleep(0.012)
+    finally:
+        frames.close()                            # an error mid-run cleans up the same way
+        app.removeEventFilter(watch)
+    return reason
+
+
+# Houdini's Network Editor only REPAINTS once the running Python call returns - a node moved
+# inside one call is drawn only at its final place (measured: ne.redraw() / hou.ui.triggerUpdate
+# don't help mid-call). So by default an action runs as a JOB on Houdini's own event loop: the
+# op returns at once, a QTimer advances one frame per tick, and Houdini paints between ticks -
+# the node is seen travelling, and Plug's own input to Houdini keeps flowing meanwhile.
+_JOBS = {}
+
+
+class _Job(QtCore.QObject):
+    def __init__(self, jid, frames, budget, report):
+        super().__init__()
+        self.jid, self.frames, self.report = jid, frames, report
+        self.state, self.reason, self.t0, self.end = "running", None, time.time(), time.time() + budget
+        self.watch = _EscWatch()
+        QtWidgets.QApplication.instance().installEventFilter(self.watch)
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(15)
+
+    def stop(self, reason="stop"):
+        if self.state == "running":
+            self._finish(reason)
+
+    def _tick(self):
+        try:
+            next(self.frames)
+        except StopIteration:
+            return self._finish(None)
+        except Exception as e:                    # the generator's finally already cleaned up
+            return self._finish("error: %s" % e)
+        if self.watch.hit:
+            self._finish("esc")
+        elif time.time() > self.end:
+            self._finish("time budget")
+
+    def _finish(self, reason):
+        self.timer.stop()
+        try:
+            self.frames.close()                   # runs the finally: restore or commit + undo
+        finally:
+            QtWidgets.QApplication.instance().removeEventFilter(self.watch)
+            self.state, self.reason = ("cancelled" if reason else "done"), reason
+            self.seconds = round(time.time() - self.t0, 3)
+
+
+def _start(frames, budget, report):
+    jid = "job%d" % (len(_JOBS) + 1)
+    _JOBS[jid] = _Job(jid, frames, budget, report)
+    return jid
+
+
+def _job(jid):
+    if jid not in _JOBS:
+        raise ValueError("no job %r (known: %s)" % (jid, ", ".join(_JOBS) or "none"))
+    return _JOBS[jid]
+
+
+def op_action_status(args):
+    j = _job(args["job"])
+    out = {"job": j.jid, "state": j.state, "cancelled": j.reason, "method": _API}
+    if j.state != "running":
+        out.update(j.report())
+        out["seconds"] = j.seconds
+    return out
+
+
+def op_action_stop(args):
+    """Stop a running job (or every running job); its node goes back / no wire is made."""
+    jobs = [_job(args["job"])] if args.get("job") else list(_JOBS.values())
+    for j in jobs:
+        j.stop(args.get("reason", "stop"))
+    return {"stopped": [j.jid for j in jobs]}
+
+
+def op_select_node(args):
+    node = hou.node(args["path"])
+    if node is None:
+        raise ValueError("no node %r" % args["path"])
+    ne = _editor_for(node)
+    px, hit = _native_anchor(ne, node, "body")
+    p = _px_to_main(ne, px)
+    ov = _glide((p.x(), p.y()))
+    ov.ripples.append((QtCore.QPointF(p.x(), p.y()), time.time()))
+    with hou.undos.group("Brother: select %s" % node.name()):
+        node.setSelected(True, clear_all_selected=not args.get("add"))
+    _pump(0.2)
+    return {"selected": [n.path() for n in hou.selectedNodes()], "method": _API,
+            "anchor": {"editor_px": [round(px[0], 1), round(px[1], 1)], "hit": hit,
+                       "main_px": [p.x(), p.y()]},
+            "editor_visible_at_anchor": editor_visible_at(ne, px)}
+
+
+def op_move_node(args):
+    """Move a node to network position (x, y) - or by (dx, dy) - visibly. API-backed."""
+    node = hou.node(args["path"])
+    if node is None:
+        raise ValueError("no node %r" % args["path"])
+    before = list(node.position())
+    to = hou.Vector2(args["x"], args["y"]) if "x" in args else \
+        hou.Vector2(node.position()) + hou.Vector2(args.get("dx", 0), args.get("dy", 0))
+    ne = _editor_for(node)
+    px, hit = _native_anchor(ne, node, "body")
+    p = _px_to_main(ne, px)
+    _glide((p.x(), p.y())).ripples.append((QtCore.QPointF(p.x(), p.y()), time.time()))
+    _pump(0.1)
+    trace = []
+    frames = move_frames(node, to, float(args.get("seconds", 0.8)), anchor_px=px, trace=trace)
+    budget = float(args.get("budget", 10.0))
+    anchor = {"editor_px": [round(px[0], 1), round(px[1], 1)], "hit": hit, "main_px": [p.x(), p.y()],
+              "editor_visible_at_anchor": editor_visible_at(ne, px)}
+    report = lambda: {"node": node.path(), "before": before, "after": list(node.position()),
+                      "anchor": anchor, "frames": len(trace),
+                      "tip_first": trace[0]["tip_main"] if trace else None,
+                      "tip_last": trace[-1]["tip_main"] if trace else None,
+                      "grab_off_px": trace[0]["grab_off_px"] if trace else None}
+    if not args.get("wait"):                      # default: a job - poll action_status
+        return dict(report(), job=_start(frames, budget, report), state="running", method=_API)
+    reason = _run(frames, budget)
+    _pump(0.2)
+    return dict(report(), cancelled=reason, method=_API)
+
+
+def op_wire_nodes(args):
+    """Connect src's output to dst's input `input` (default 0), drawing the wire with the cursor
+    from one to the other first. API-backed (setInput). Esc during the wire -> no connection."""
+    src, dst = hou.node(args["src"]), hou.node(args["dst"])
+    if src is None or dst is None:
+        raise ValueError("no node %r / %r" % (args["src"], args["dst"]))
+    idx = int(args.get("input", 0))
+    ne = _editor_for(dst)
+    # the REAL port dots from the editor's hit-test (COP: bottom row, input left / output right)
+    oidx = int(args.get("output", 0))
+    apx, _ = _native_anchor(ne, src, "output", oidx)
+    s0 = _editor_px(ne, src.position())
+    try:
+        bpx, _ = _native_anchor(ne, dst, "input", idx)
+    except RuntimeError:                              # Merge & co: one 'multiinput' port, no 'input N'
+        bpx, _ = _native_anchor(ne, dst, "multiinput", -1)  # Houdini's key is ('multiinput', -1)
+    s1 = _editor_px(ne, src.position())
+    if s1 != s0:                                      # panned for dst: src's port moved with it
+        apx = (apx[0] + s1[0] - s0[0], apx[1] + s1[1] - s0[1])
+        w, h = ne.screenBounds().size()
+        if not (0 <= apx[0] <= w and 0 <= apx[1] <= h):
+            raise RuntimeError("src and dst do not fit in one view; zoom out first")
+    ap, bp = _px_to_main(ne, apx), _px_to_main(ne, bpx)
+    a, b = (ap.x(), ap.y()), (bp.x(), bp.y())
+    speed = max(float(args.get("speed", 1.0)), 0.1)     # >1: faster glide + pull (default 1)
+    _glide(a, speed=speed)
+
+    # The wire being pulled is Houdini's OWN preview wire (the overlay shape nodegraphconnect draws
+    # when a user drags from a port), not the old pink guide line (Plug 29 Oct).
+    out_pos, out_dir = ne.itemOutputPos(src, oidx), ne.itemOutputDir(src, oidx)
+    in_dir = ne.itemInputDir(dst, idx)
+    wire_clr = hou.ui.colorFromName("GraphPreSelection")
+
+    def frames():
+        ov = _overlay()
+        try:
+            t0, secs = time.time(), float(args.get("seconds", 0.7)) / speed
+            while True:
+                k = min(1.0, (time.time() - t0) / secs)
+                e = ease_in_out_quint(k)
+                cur = (a[0] + (b[0] - a[0]) * e, a[1] + (b[1] - a[1]) * e)
+                ed =(apx[0] + (bpx[0] - apx[0]) * e, apx[1] + (bpx[1] - apx[1]) * e)
+                ne.setOverlayShapes([hou.NetworkShapeConnection(
+                    out_pos, out_dir, ne.posFromScreen(hou.Vector2(*ed)), in_dir, wire_clr, 1.0)])
+                ov.pos_ = QtCore.QPointF(*cur)
+                ov.wire = None
+                ov.last_active = ov.last_move = time.time()
+                ov.has_cursor = True
+                ov.update()
+                if k >= 1.0:
+                    break
+                yield
+            with hou.undos.group("Brother: wire %s -> %s" % (src.name(), dst.name())):
+                dst.setInput(idx, src)
+        finally:
+            ne.setOverlayShapes([])
+            ov.wire = None
+            ov.update()
+    def report():
+        ins = dst.inputs()
+        return {"dst": dst.path(), "input": idx,
+                "connected_to": ins[idx].path() if len(ins) > idx and ins[idx] else None}
+    budget = float(args.get("budget", 10.0))
+    if not args.get("wait"):
+        return dict(report(), job=_start(frames(), budget, report), state="running", method=_API)
+    reason = _run(frames(), budget)
+    _pump(0.2)
+    return dict(report(), cancelled=reason, method=_API)
+
+
 OPS = {"screenshot": op_screenshot, "pointer": op_pointer, "click": op_click, "type": op_type,
        "key": op_key, "cursor_hide": op_cursor_hide, "create_node": op_create_node,
        "click_node": op_click_node, "pane_screenshot": op_pane_screenshot,
-       "set_parm_shown": op_set_parm_shown}
+       "set_parm_shown": op_set_parm_shown, "control_hold": op_control_hold, "drag": op_drag,
+       "select_node": op_select_node, "move_node": op_move_node, "wire_nodes": op_wire_nodes,
+       "action_status": op_action_status, "action_stop": op_action_stop,
+       "capture_pane": op_capture_pane, "task": op_task}

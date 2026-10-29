@@ -385,12 +385,18 @@ if hou.isUIAvailable():                  # the virtual cursor only exists where 
     import brother_cursor
     importlib.reload(brother_cursor)     # a reload of brother_link picks up cursor changes too
     OPS.update(brother_cursor.OPS)
+    import brother_demo
+    brother_demo.stop_all()              # a reload never leaves a demo runner behind
+    importlib.reload(brother_demo)
+    OPS.update(brother_demo.OPS)
 
 
 # ----------------------------------------------------------------------------- "in control"
 # Requests that only LOOK never dim the screen; everything that acts does.
 _LOOK_OPS = {"ping", "scene", "network", "node", "problems", "geometry", "attrib", "compare",
-             "capture", "screenshot", "pane_screenshot", "cursor_hide"}
+             "capture", "screenshot", "pane_screenshot", "capture_pane", "cursor_hide",
+             "demo_status", "demo_stop",          # stopping must not re-light the frame
+             "action_status", "action_stop"}
 
 
 def _is_control(name, args):

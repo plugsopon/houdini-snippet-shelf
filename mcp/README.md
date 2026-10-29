@@ -333,3 +333,33 @@ the sidebar folds itself below 760px (☰ or Ctrl+B to toggle; a manual toggle w
 tab calls `shutdown()` so no claude process is left behind. Each pane (and the floating window)
 runs its own chats - don't open the SAME chat in two of them at once.
 Test: `hython tests/test_chat_pane_embedded.py`.
+
+## Held control frame + the prompt-node demo (2026-10-25)
+
+- **Held frame.** The control frame / dark fade used to fall away 1.2 s after the last tool
+  call, so it flickered between thoughts. `brother_cursor.hold(ttl)` (op `control_hold`
+  start|beat|stop, MCP `houdini_control_hold`) keeps it up until `held_until`; the TTL is
+  clamped to 0.5–120 s, so a runner or a session that dies lets go by itself. Pure rule in
+  `brother_demo_plan.edge_target` / `should_hide`.
+- **Demo runner** (`brother_demo.py`, ops `demo_start` / `demo_stop` / `demo_status`, MCP
+  `houdini_demo_*`). Works only inside `/obj/BROTHER_DEMO_246_A`: renames the three demo
+  wrangles to `Camera_Prompt` / `Model_Pose_Prompt` / `Mood_and_Tone_Prompt` (undoable, refuses
+  non-wrangles), then plays a timeline from a 15 ms QTimer: glide → select → type the prompt
+  one character at a time with partial edits and a typo fix → move the node (`api_move`, setPosition — not a native drag) → pull a wire
+  camera→pose→mood. `cycles=N` is bounded; omit it to loop until Stop. One cycle ≈ 16–18 s
+  planned, 20.6 s measured.
+- **Text is inert.** Every state typed is a single `// …` comment line (`edit_steps` refuses
+  anything else), set with `parm.set` under `hou.undos.disabler()` — no key events, so no
+  network-editor hotkey can fire. A COP wrangle cooks locally if displayed; a comment does nothing.
+- **Stop.** Pink ■ STOP button, Esc anywhere (never swallowed), `demo_stop`, or Houdini quitting.
+  Measured stop latency 204 ms. Cleanup runs each step in its own try: timer, generator
+  `finally`s, wire line, hold, Esc filter, quit hook, button, then restores the editor's
+  pwd/bounds/current node, the selection and the frame. An exception mid-run takes the same path.
+- **Honest limits.** The H21 network editor ignores synthetic mouse input (2026-10-25: press
+  on a node BODY then drag, delivered three ways - `sendEvent` to the `RE_GLDrawable` widget,
+  `QTest` on its QWindow, Win32 `PostMessage` to its HWND - the node neither moved nor got
+  selected; port-to-port wiring was not attempted because a plain press does nothing). So the step is named `api_move` = `setPosition` every frame along
+  the cursor path, and *wire* = an overlay line + `setInput` on release. `drag_frames` (a real
+  press-move-release that always releases in `finally`) is kept for widgets that do accept it.
+  New MCP tools appear after the MCP server restarts; until then call the ops via
+  `houdini_run_python`. Tests: `python tests/test_demo_plan.py` (35 checks incl. 6 sabotages).

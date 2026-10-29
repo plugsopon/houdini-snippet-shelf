@@ -305,6 +305,23 @@ def houdini_pane_screenshot(kind: str = "parm", pane: str | None = None,
 
 
 @mcp.tool()
+def houdini_capture_pane(pane: str | None = None) -> list:
+    """The Network Editor as Houdini actually drew it - works even when another window (e.g.
+    Chrome) covers Houdini, and never raises, focuses or moves anything. pane = a pane tab name;
+    default = the visible Network Editor. Refuses a hidden tab, a non-network pane, an unknown
+    name, a minimised window or a black image. Returns the image plus pan/zoom, size, DPI and
+    whether the pane was covered at the time. Use houdini_pane_screenshot to read other panes."""
+    res = json.loads(_run("capture_pane", {"pane": pane}))
+    with open(res["file"], "rb") as fh:
+        data = fh.read()
+    vb = res["pan_zoom_visibleBounds"]
+    return ["%s %s %dx%d @%ddpi, net %s, view [%.2f %.2f %.2f %.2f], covered=%s, sha256 %s" %
+            (res["pane_type"], res["pane"], res["width"], res["height"], res["dpi"], res["network"],
+             vb[0], vb[1], vb[2], vb[3], res["occlusion"]["occluded"], res["sha256"][:16]),
+            Image(data=data, format="png")]
+
+
+@mcp.tool()
 def houdini_set_parm_shown(path: str, parm: str, value: float | int | str | list | None = None,
                            expression: str | None = None, x: float | None = None,
                            y: float | None = None) -> str:
@@ -319,6 +336,129 @@ def houdini_set_parm_shown(path: str, parm: str, value: float | int | str | list
 def houdini_cursor_hide() -> str:
     """Remove Brother's visible cursor from the Houdini window."""
     return _run("cursor_hide")
+
+
+@mcp.tool()
+def houdini_control_hold(action: str = "start", ttl: float = 8.0) -> str:
+    """Keep the "Brother is in control" frame on BETWEEN tool calls. action = start | beat
+    (renew) | stop. A hold always ends by itself ttl seconds (max 120) after the last renewal."""
+    return _run("control_hold", {"action": action, "ttl": ttl})
+
+
+@mcp.tool()
+def houdini_drag(x0: float, y0: float, x1: float, y1: float, seconds: float = 0.8) -> str:
+    """A real press -> move -> release with the cursor drawn along. NOTE: Houdini 21's Network
+    Editor ignores synthetic drags (nodes don't move, wires don't connect) - check the result."""
+    return _run("drag", {"x0": x0, "y0": y0, "x1": x1, "y1": y1, "seconds": seconds})
+
+
+# ----------------------------------------------------------------------------- tools: graph actions
+# Houdini's Network Editor ignores injected mouse input, so these change the graph through hou
+# while Brother's own cursor shows the action. Every result carries method = "api-backed (hou),
+# not an input event". move/wire run as a JOB by default: they return at once with a job id,
+# Houdini repaints while the node travels, and Plug's mouse/keyboard focus are never touched.
+# Esc in Houdini, houdini_action_stop or the time budget cancel a job; a cancelled move puts
+# the node back and a cancelled wire connects nothing. A finished one is one "Brother:" undo step.
+@mcp.tool()
+def houdini_select_node(path: str, add: bool = False) -> str:
+    """Brother's cursor glides to the node and selects it (add=True keeps the current selection)."""
+    return _run("select_node", {"path": path, "add": add})
+
+
+@mcp.tool()
+def houdini_move_node(path: str, x: float | None = None, y: float | None = None,
+                      dx: float | None = None, dy: float | None = None, seconds: float = 0.8,
+                      budget: float = 10.0, wait: bool = False) -> str:
+    """Move a node to network position (x, y) - lower-left corner, like setPosition - or by
+    (dx, dy), visibly. Default returns a job id: poll houdini_action_status. wait=True blocks
+    (the node is then only drawn at its final place)."""
+    args = {"path": path, "seconds": seconds, "budget": budget, "wait": wait}
+    if x is not None or y is not None:
+        if x is None or y is None:
+            raise ValueError("give both x and y, or dx/dy")
+        args.update(x=x, y=y)
+    else:
+        args.update(dx=dx or 0.0, dy=dy or 0.0)
+    return _run("move_node", args)
+
+
+@mcp.tool()
+def houdini_wire_nodes(src: str, dst: str, input: int = 0, seconds: float = 0.7,
+                       budget: float = 10.0, wait: bool = False) -> str:
+    """Connect src's output to dst's input `input`, the cursor drawing the wire first. Default
+    returns a job id: poll houdini_action_status for connected_to."""
+    return _run("wire_nodes", {"src": src, "dst": dst, "input": input, "seconds": seconds,
+                               "budget": budget, "wait": wait})
+
+
+@mcp.tool()
+def houdini_action_status(job: str) -> str:
+    """A move/wire job's state (running | done | cancelled), why it was cancelled, and its result."""
+    return _run("action_status", {"job": job})
+
+
+@mcp.tool()
+def houdini_action_stop(job: str | None = None) -> str:
+    """Stop one running move/wire job, or every one when job is omitted."""
+    return _run("action_stop", {"job": job} if job else {})
+
+
+@mcp.tool()
+def houdini_demo_start(cycles: int | None = None) -> str:
+    """Start the local demo loop on the prompt Wrangles in /obj/BROTHER_DEMO_246_A (held frame,
+    cursor, per-character typing, animated moves and wires). cycles=None loops until Stop
+    (the STOP button, Esc, or houdini_demo_stop). Only when Plug asks for it."""
+    return _run("demo_start", {"cycles": cycles})
+
+
+@mcp.tool()
+def houdini_demo_stop() -> str:
+    """Stop the demo now; cleanup restores the view/selection and releases the frame."""
+    return _run("demo_stop")
+
+
+@mcp.tool()
+def houdini_demo_status() -> str:
+    """The demo's state, cycle, counts, stop reason/latency and any error."""
+    return _run("demo_status")
+
+
+_FERN = {"proc": None}
+FERN_LOG = os.path.join(os.path.expanduser("~"), ".houdini_brother", "fern_demo.log")
+
+
+@mcp.tool()
+def houdini_fern_demo(speed: float = 2.5, chars_per_second: float = 60.0) -> str:
+    """The recorded fern-field demo (rnd/fern_demo): deletes ONLY /obj/brother_fern_field, then
+    rebuilds it node by node with the cursor, wires and typed VEX (fern with noise wind, seedling
+    scale, For-Each growth stages built last, Crag walking through, Copy to Points), holds the
+    purple frame (Esc stops it) and plays from frame 1. Runs in the background (~2-4 min); follow
+    it with houdini_fern_demo_status. Only when Plug asks for the fern demo. Lower speed /
+    chars_per_second = slower for recording."""
+    import subprocess
+    p = _FERN["proc"]
+    if p and p.poll() is None:
+        return "The fern demo is already running (pid %d)." % p.pid
+    reg = _current()
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rnd", "fern_demo", "fern_demo.py")
+    env = dict(os.environ, HOUDINI_BROTHER_PID=str(reg["pid"]), PYTHONUNBUFFERED="1", MSYS_NO_PATHCONV="1")
+    log = open(FERN_LOG, "w", encoding="utf8")
+    _FERN["proc"] = subprocess.Popen([sys.executable, script, str(speed), str(chars_per_second)],
+                                     cwd=os.path.dirname(script), env=env, stdout=log, stderr=subprocess.STDOUT)
+    return "Fern demo started in Houdini pid %s (speed %s, %s chars/s). Esc in Houdini stops it." % (
+        reg["pid"], speed, chars_per_second)
+
+
+@mcp.tool()
+def houdini_fern_demo_status() -> str:
+    """Whether the fern demo is still running, and the last lines of its log."""
+    p = _FERN["proc"]
+    state = "not started" if p is None else ("running" if p.poll() is None else "finished (exit %s)" % p.returncode)
+    try:
+        tail = open(FERN_LOG, encoding="utf8").read().splitlines()[-12:]
+    except OSError:
+        tail = []
+    return state + ("\n" + "\n".join(tail) if tail else "")
 
 
 @mcp.tool()
